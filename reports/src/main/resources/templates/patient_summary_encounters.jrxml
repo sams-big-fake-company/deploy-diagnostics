@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Subreport: Recent encounters for patient summary -->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="patient_summary_encounters" pageWidth="556" pageHeight="100" columnWidth="556"
+              leftMargin="0" rightMargin="0" topMargin="0" bottomMargin="0"
+              uuid="sub-enc-001">
+
+    <parameter name="patient_id" class="java.lang.Integer"/>
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            TO_CHAR(e.admission_date, 'MM/DD/YYYY') AS admit_date,
+            COALESCE(TO_CHAR(e.discharge_date, 'MM/DD/YYYY'), 'Active') AS discharge_date,
+            e.encounter_type,
+            d.name AS department,
+            pr.last_name || ', ' || pr.first_name AS provider,
+            e.chief_complaint,
+            length_of_stay(e.admission_date, e.discharge_date) AS los,
+            (SELECT STRING_AGG(dx.icd10_code, ', ' ORDER BY
+                CASE dx.diagnosis_type WHEN 'PRIMARY' THEN 1 ELSE 2 END)
+             FROM diagnoses dx WHERE dx.encounter_id = e.encounter_id) AS dx_codes
+        FROM encounters e
+        JOIN departments d ON e.department_id = d.department_id
+        LEFT JOIN providers pr ON e.provider_id = pr.provider_id
+        WHERE e.patient_id = $P{patient_id}
+          AND e.admission_date >= CURRENT_DATE - INTERVAL '90 days'
+        ORDER BY e.admission_date DESC
+        LIMIT 10
+        ]]>
+    </queryString>
+
+    <field name="admit_date" class="java.lang.String"/>
+    <field name="discharge_date" class="java.lang.String"/>
+    <field name="encounter_type" class="java.lang.String"/>
+    <field name="department" class="java.lang.String"/>
+    <field name="provider" class="java.lang.String"/>
+    <field name="chief_complaint" class="java.lang.String"/>
+    <field name="los" class="java.lang.Integer"/>
+    <field name="dx_codes" class="java.lang.String"/>
+
+    <columnHeader>
+        <band height="15">
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="0" width="70" height="15" backcolor="#D6E4F0" uuid="ch-admit"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Admit]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="70" y="0" width="70" height="15" backcolor="#D6E4F0" uuid="ch-dc"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Discharge]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="140" y="0" width="60" height="15" backcolor="#D6E4F0" uuid="ch-type"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Type]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="200" y="0" width="80" height="15" backcolor="#D6E4F0" uuid="ch-dept"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Department]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="280" y="0" width="90" height="15" backcolor="#D6E4F0" uuid="ch-prov"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Provider]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="370" y="0" width="120" height="15" backcolor="#D6E4F0" uuid="ch-cc"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Chief Complaint]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="490" y="0" width="66" height="15" backcolor="#D6E4F0" uuid="ch-dx"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Dx Codes]]></text>
+            </staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="14">
+            <textField isBlankWhenNull="true">
+                <reportElement x="0" y="0" width="70" height="14" uuid="d-admit"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{admit_date}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="70" y="0" width="70" height="14" uuid="d-dc"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{discharge_date}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="140" y="0" width="60" height="14" uuid="d-type"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{encounter_type}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="200" y="0" width="80" height="14" uuid="d-dept"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{department}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="280" y="0" width="90" height="14" uuid="d-prov"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{provider}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true" isStretchWithOverflow="true">
+                <reportElement x="370" y="0" width="120" height="14" uuid="d-cc"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{chief_complaint}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="490" y="0" width="66" height="14" uuid="d-dx"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{dx_codes}]]></textFieldExpression>
+            </textField>
+        </band>
+    </detail>
+
+    <noData>
+        <band height="15">
+            <staticText>
+                <reportElement x="0" y="0" width="556" height="15" forecolor="#999999" uuid="no-enc"/>
+                <textElement><font fontName="SansSerif" size="8" isItalic="true"/></textElement>
+                <text><![CDATA[No encounters in the last 90 days.]]></text>
+            </staticText>
+        </band>
+    </noData>
+</jasperReport>

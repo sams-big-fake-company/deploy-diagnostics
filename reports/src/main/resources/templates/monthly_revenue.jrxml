@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Monthly Revenue Report
+     Created: 2019-09-01 by Marcus Chen
+     Modified: 2023-06-15 by Sarah Kim - added payer mix breakdown (JIRA-4200)
+     Modified: 2024-01-20 by Sarah Kim - fixed contractual adj double-counting (JIRA-5920)
+     
+     Financial summary for a given month. Used by the CFO's office and
+     department managers. Breaks down revenue by department, payer type,
+     and payment status. Includes denial rate tracking.
+     
+     This report takes a LONG time to run for months with high volume.
+     Marcus tried to optimize the query once but gave up. The view
+     v_revenue_summary helps but the underlying tables should probably
+     have better indexes. - Sarah, 2024-01-20
+     
+     KNOWN ISSUE: The "Net Revenue" calculation doesn't exactly match
+     the GL system (Epic Resolute) because we don't account for late
+     adjustments posted after month-end close. Finance has accepted this
+     discrepancy (usually <0.5%). See JIRA-4850 for discussion.
+-->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="monthly_revenue" pageWidth="792" pageHeight="612" orientation="Landscape"
+              columnWidth="752" leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20"
+              uuid="rev-main-001">
+
+    <parameter name="report_month" class="java.lang.Integer">
+        <defaultValueExpression><![CDATA[java.time.LocalDate.now().getMonthValue()]]></defaultValueExpression>
+    </parameter>
+    <parameter name="report_year" class="java.lang.Integer">
+        <defaultValueExpression><![CDATA[java.time.LocalDate.now().getYear()]]></defaultValueExpression>
+    </parameter>
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            rs.department_name,
+            rs.department_code,
+            rs.payer_category,
+            rs.encounter_count,
+            rs.total_charges,
+            rs.total_insurance_adjustments,
+            rs.total_contractual_adjustments,
+            -- Net revenue = charges - all adjustments
+            -- JIRA-5920: Previously was double-counting contractual adj
+            rs.total_charges - rs.total_insurance_adjustments - rs.total_contractual_adjustments AS net_revenue,
+            rs.total_patient_responsibility,
+            rs.total_payments,
+            -- Collection rate
+            CASE WHEN (rs.total_charges - rs.total_insurance_adjustments - rs.total_contractual_adjustments) > 0 THEN
+                ROUND(rs.total_payments / (rs.total_charges - rs.total_insurance_adjustments - rs.total_contractual_adjustments) * 100, 1)
+            ELSE 0 END AS collection_rate_pct,
+            -- Denied claims count
+            (SELECT COUNT(*) FROM insurance_claims ic
+             JOIN encounters e ON ic.encounter_id = e.encounter_id
+             JOIN departments d ON e.department_id = d.department_id
+             WHERE d.name = rs.department_name
+               AND ic.status = 'DENIED'
+               AND EXTRACT(MONTH FROM ic.submitted_date) = $P{report_month}
+               AND EXTRACT(YEAR FROM ic.submitted_date) = $P{report_year}
+            ) AS denied_claims,
+            (SELECT COUNT(*) FROM insurance_claims ic
+             JOIN encounters e ON ic.encounter_id = e.encounter_id
+             JOIN departments d ON e.department_id = d.department_id
+             WHERE d.name = rs.department_name
+               AND EXTRACT(MONTH FROM ic.submitted_date) = $P{report_month}
+               AND EXTRACT(YEAR FROM ic.submitted_date) = $P{report_year}
+            ) AS total_claims
+        FROM v_revenue_summary rs
+        WHERE rs.report_month = $P{report_month}
+          AND rs.report_year = $P{report_year}
+        ORDER BY rs.department_name, rs.payer_category
+        ]]>
+    </queryString>
+
+    <field name="department_name" class="java.lang.String"/>
+    <field name="department_code" class="java.lang.String"/>
+    <field name="payer_category" class="java.lang.String"/>
+    <field name="encounter_count" class="java.lang.Long"/>
+    <field name="total_charges" class="java.math.BigDecimal"/>
+    <field name="total_insurance_adjustments" class="java.math.BigDecimal"/>
+    <field name="total_contractual_adjustments" class="java.math.BigDecimal"/>
+    <field name="net_revenue" class="java.math.BigDecimal"/>
+    <field name="total_patient_responsibility" class="java.math.BigDecimal"/>
+    <field name="total_payments" class="java.math.BigDecimal"/>
+    <field name="collection_rate_pct" class="java.math.BigDecimal"/>
+    <field name="denied_claims" class="java.lang.Long"/>
+    <field name="total_claims" class="java.lang.Long"/>
+
+    <!-- Department subtotals -->
+    <variable name="dept_charges" class="java.math.BigDecimal" resetType="Group" resetGroup="deptGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{total_charges}]]></variableExpression>
+    </variable>
+    <variable name="dept_net" class="java.math.BigDecimal" resetType="Group" resetGroup="deptGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{net_revenue}]]></variableExpression>
+    </variable>
+    <variable name="dept_payments" class="java.math.BigDecimal" resetType="Group" resetGroup="deptGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{total_payments}]]></variableExpression>
+    </variable>
+    <variable name="dept_encounters" class="java.lang.Long" resetType="Group" resetGroup="deptGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{encounter_count}]]></variableExpression>
+    </variable>
+
+    <!-- Grand totals -->
+    <variable name="grand_charges" class="java.math.BigDecimal" calculation="Sum">
+        <variableExpression><![CDATA[$F{total_charges}]]></variableExpression>
+    </variable>
+    <variable name="grand_net" class="java.math.BigDecimal" calculation="Sum">
+        <variableExpression><![CDATA[$F{net_revenue}]]></variableExpression>
+    </variable>
+    <variable name="grand_payments" class="java.math.BigDecimal" calculation="Sum">
+        <variableExpression><![CDATA[$F{total_payments}]]></variableExpression>
+    </variable>
+    <variable name="grand_encounters" class="java.lang.Long" calculation="Sum">
+        <variableExpression><![CDATA[$F{encounter_count}]]></variableExpression>
+    </variable>
+
+    <group name="deptGroup">
+        <groupExpression><![CDATA[$F{department_name}]]></groupExpression>
+        <groupHeader>
+            <band height="20">
+                <textField>
+                    <reportElement mode="Opaque" x="0" y="0" width="752" height="20" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="dg-hdr"/>
+                    <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA["  " + $F{department_name} + " (" + $F{department_code} + ")"]]></textFieldExpression>
+                </textField>
+            </band>
+        </groupHeader>
+        <groupFooter>
+            <band height="20">
+                <line><reportElement x="0" y="0" width="752" height="1" forecolor="#1A3C6E" uuid="dg-line"/></line>
+                <staticText><reportElement x="0" y="2" width="100" height="16" uuid="dg-lbl"/>
+                    <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                    <text><![CDATA[  Department Total:]]></text></staticText>
+                <textField><reportElement x="100" y="2" width="50" height="16" uuid="dg-enc"/>
+                    <textElement textAlignment="Right"><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA[$V{dept_encounters}]]></textFieldExpression></textField>
+                <textField pattern="$#,##0"><reportElement x="200" y="2" width="100" height="16" uuid="dg-chg"/>
+                    <textElement textAlignment="Right"><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA[$V{dept_charges}]]></textFieldExpression></textField>
+                <textField pattern="$#,##0"><reportElement x="430" y="2" width="100" height="16" uuid="dg-net"/>
+                    <textElement textAlignment="Right"><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA[$V{dept_net}]]></textFieldExpression></textField>
+                <textField pattern="$#,##0"><reportElement x="580" y="2" width="80" height="16" uuid="dg-pay"/>
+                    <textElement textAlignment="Right"><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA[$V{dept_payments}]]></textFieldExpression></textField>
+            </band>
+        </groupFooter>
+    </group>
+
+    <title>
+        <band height="60">
+            <staticText>
+                <reportElement x="0" y="0" width="400" height="24" forecolor="#1A3C6E" uuid="t-title"/>
+                <textElement><font fontName="SansSerif" size="16" isBold="true"/></textElement>
+                <text><![CDATA[ACME HEALTH SYSTEMS]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="0" y="24" width="400" height="18" forecolor="#666666" uuid="t-sub"/>
+                <textElement><font fontName="SansSerif" size="12"/></textElement>
+                <textFieldExpression><![CDATA["Monthly Revenue Report - " + new java.text.DateFormatSymbols().getMonths()[$P{report_month}-1] + " " + $P{report_year}]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="550" y="24" width="202" height="14" forecolor="#666666" uuid="t-gen"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA["Generated: " + new java.text.SimpleDateFormat("MM/dd/yyyy HH:mm").format(new java.util.Date())]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="550" y="0" width="202" height="14" forecolor="#CC0000" uuid="t-conf"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[CONFIDENTIAL - FINANCIAL DATA]]></text>
+            </staticText>
+            <line><reportElement x="0" y="48" width="752" height="1" forecolor="#1A3C6E" uuid="t-line"/></line>
+        </band>
+    </title>
+
+    <columnHeader>
+        <band height="16">
+            <staticText><reportElement mode="Opaque" x="0" y="0" width="100" height="16" backcolor="#D6E4F0" uuid="h-payer"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[ Payer Category]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="100" y="0" width="50" height="16" backcolor="#D6E4F0" uuid="h-enc"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Enc ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="150" y="0" width="50" height="16" backcolor="#D6E4F0" uuid="h-spacer"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7"/></textElement>
+                <text><![CDATA[]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="200" y="0" width="100" height="16" backcolor="#D6E4F0" uuid="h-chg"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Gross Charges ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="300" y="0" width="70" height="16" backcolor="#D6E4F0" uuid="h-iadj"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Ins Adj ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="370" y="0" width="60" height="16" backcolor="#D6E4F0" uuid="h-cadj"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Cntrl Adj ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="430" y="0" width="100" height="16" backcolor="#D6E4F0" uuid="h-net"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Net Revenue ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="530" y="0" width="50" height="16" backcolor="#D6E4F0" uuid="h-patresp"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Pt Resp ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="580" y="0" width="80" height="16" backcolor="#D6E4F0" uuid="h-paid"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Payments ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="660" y="0" width="46" height="16" backcolor="#D6E4F0" uuid="h-coll"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Coll% ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="706" y="0" width="46" height="16" backcolor="#D6E4F0" uuid="h-deny"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Deny% ]]></text></staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="14">
+            <textField><reportElement x="0" y="0" width="100" height="14" uuid="d-payer"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA["  " + $F{payer_category}]]></textFieldExpression></textField>
+            <textField><reportElement x="100" y="0" width="50" height="14" uuid="d-enc"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{encounter_count}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="200" y="0" width="100" height="14" uuid="d-chg"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_charges}]]></textFieldExpression></textField>
+            <textField pattern="($#,##0)"><reportElement x="300" y="0" width="70" height="14" uuid="d-iadj"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_insurance_adjustments}]]></textFieldExpression></textField>
+            <textField pattern="($#,##0)"><reportElement x="370" y="0" width="60" height="14" uuid="d-cadj"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_contractual_adjustments}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="430" y="0" width="100" height="14" uuid="d-net"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{net_revenue}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="530" y="0" width="50" height="14" uuid="d-patresp"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_patient_responsibility}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="580" y="0" width="80" height="14" uuid="d-paid"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_payments}]]></textFieldExpression></textField>
+            <textField><reportElement x="660" y="0" width="46" height="14" uuid="d-coll"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{collection_rate_pct} + "%"]]></textFieldExpression></textField>
+            <!-- Denial rate: red if > 10% -->
+            <textField>
+                <reportElement x="706" y="0" width="46" height="14" uuid="d-deny"
+                    forecolor="#CC0000">
+                    <printWhenExpression><![CDATA[$F{total_claims} > 0 && ($F{denied_claims} * 100.0 / $F{total_claims}) > 10]]></printWhenExpression>
+                </reportElement>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_claims} > 0 ? String.format("%.0f%%", $F{denied_claims} * 100.0 / $F{total_claims}) : "N/A"]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="706" y="0" width="46" height="14" uuid="d-deny-ok">
+                    <printWhenExpression><![CDATA[$F{total_claims} == 0 || ($F{denied_claims} * 100.0 / $F{total_claims}) <= 10]]></printWhenExpression>
+                </reportElement>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_claims} > 0 ? String.format("%.0f%%", $F{denied_claims} * 100.0 / $F{total_claims}) : "N/A"]]></textFieldExpression>
+            </textField>
+        </band>
+    </detail>
+
+    <summary>
+        <band height="50">
+            <line><reportElement x="0" y="0" width="752" height="2" forecolor="#1A3C6E" uuid="s-line"/></line>
+            <staticText><reportElement x="0" y="4" width="100" height="16" uuid="s-lbl"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[  GRAND TOTAL]]></text></staticText>
+            <textField><reportElement x="100" y="4" width="50" height="16" uuid="s-enc"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$V{grand_encounters}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="200" y="4" width="100" height="16" uuid="s-chg"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$V{grand_charges}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="430" y="4" width="100" height="16" forecolor="#1A3C6E" uuid="s-net"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="10" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$V{grand_net}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="580" y="4" width="80" height="16" uuid="s-pay"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$V{grand_payments}]]></textFieldExpression></textField>
+
+            <staticText>
+                <reportElement x="0" y="28" width="752" height="14" forecolor="#999999" uuid="s-note"/>
+                <textElement><font fontName="SansSerif" size="6" isItalic="true"/></textElement>
+                <text><![CDATA[Note: Net Revenue figures may differ from GL by <0.5% due to late adjustments posted after month-end close (see JIRA-4850). For official financial reporting, use Epic Resolute.]]></text>
+            </staticText>
+        </band>
+    </summary>
+
+    <pageFooter>
+        <band height="15">
+            <staticText><reportElement x="0" y="2" width="400" height="10" forecolor="#999999" uuid="f-1"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <text><![CDATA[CONFIDENTIAL - Financial data for internal use only - Acme Health Systems]]></text></staticText>
+            <textField><reportElement x="600" y="2" width="152" height="10" forecolor="#999999" uuid="f-pg"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER}]]></textFieldExpression></textField>
+        </band>
+    </pageFooter>
+</jasperReport>

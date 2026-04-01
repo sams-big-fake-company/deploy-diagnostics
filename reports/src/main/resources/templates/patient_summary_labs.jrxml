@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Subreport: Latest lab results for patient summary
+     Shows most recent result per test code -->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="patient_summary_labs" pageWidth="556" pageHeight="120" columnWidth="556"
+              leftMargin="0" rightMargin="0" topMargin="0" bottomMargin="0"
+              uuid="sub-lab-001">
+
+    <parameter name="patient_id" class="java.lang.Integer"/>
+
+    <!-- This query uses a window function to get the most recent result per test.
+         Marcus originally used a correlated subquery here but it was slow.
+         Sarah rewrote it in 2023 using DISTINCT ON. -->
+    <queryString>
+        <![CDATA[
+        SELECT DISTINCT ON (lr.test_code, lr.test_name)
+            lr.test_name,
+            lr.result_value,
+            lr.unit,
+            CASE
+                WHEN lr.reference_range_low IS NOT NULL AND lr.reference_range_high IS NOT NULL THEN
+                    CAST(lr.reference_range_low AS VARCHAR) || '-' || CAST(lr.reference_range_high AS VARCHAR)
+                ELSE 'N/A'
+            END AS ref_range,
+            lr.abnormal_flag,
+            lr.critical_flag,
+            TO_CHAR(lr.collected_date, 'MM/DD/YYYY HH24:MI') AS collected,
+            lr.status
+        FROM lab_results lr
+        WHERE lr.patient_id = $P{patient_id}
+          AND lr.status IN ('FINAL', 'CORRECTED')
+          AND lr.collected_date >= CURRENT_DATE - INTERVAL '30 days'
+        ORDER BY lr.test_code, lr.test_name, lr.collected_date DESC
+        ]]>
+    </queryString>
+
+    <field name="test_name" class="java.lang.String"/>
+    <field name="result_value" class="java.lang.String"/>
+    <field name="unit" class="java.lang.String"/>
+    <field name="ref_range" class="java.lang.String"/>
+    <field name="abnormal_flag" class="java.lang.String"/>
+    <field name="critical_flag" class="java.lang.Boolean"/>
+    <field name="collected" class="java.lang.String"/>
+    <field name="status" class="java.lang.String"/>
+
+    <columnHeader>
+        <band height="15">
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="0" width="140" height="15" backcolor="#D6E4F0" uuid="lh-test"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Test]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="140" y="0" width="80" height="15" backcolor="#D6E4F0" uuid="lh-val"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Result]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="220" y="0" width="50" height="15" backcolor="#D6E4F0" uuid="lh-unit"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Unit]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="270" y="0" width="80" height="15" backcolor="#D6E4F0" uuid="lh-ref"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Ref Range]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="350" y="0" width="40" height="15" backcolor="#D6E4F0" uuid="lh-flag"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Flag]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="390" y="0" width="110" height="15" backcolor="#D6E4F0" uuid="lh-date"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Collected]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="500" y="0" width="56" height="15" backcolor="#D6E4F0" uuid="lh-status"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Status]]></text>
+            </staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="14">
+            <textField isBlankWhenNull="true">
+                <reportElement x="0" y="0" width="140" height="14" uuid="ld-test"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{test_name}]]></textFieldExpression>
+            </textField>
+            <!-- Result value: red if critical, orange if abnormal -->
+            <textField isBlankWhenNull="true">
+                <reportElement x="140" y="0" width="80" height="14"
+                    forecolor="#000000" uuid="ld-val">
+                    <printWhenExpression><![CDATA[!$F{critical_flag} && ($F{abnormal_flag} == null || $F{abnormal_flag}.equals("N"))]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{result_value}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="140" y="0" width="80" height="14"
+                    forecolor="#CC6600" uuid="ld-val-abn">
+                    <printWhenExpression><![CDATA[!$F{critical_flag} && $F{abnormal_flag} != null && !$F{abnormal_flag}.equals("N")]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{result_value}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="140" y="0" width="80" height="14"
+                    forecolor="#CC0000" uuid="ld-val-crit">
+                    <printWhenExpression><![CDATA[$F{critical_flag}]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA["** " + $F{result_value} + " **"]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="220" y="0" width="50" height="14" uuid="ld-unit"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{unit}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="270" y="0" width="80" height="14" uuid="ld-ref"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{ref_range}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="350" y="0" width="40" height="14" uuid="ld-flag"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{abnormal_flag}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="390" y="0" width="110" height="14" uuid="ld-date"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{collected}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="500" y="0" width="56" height="14" uuid="ld-status"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{status}]]></textFieldExpression>
+            </textField>
+        </band>
+    </detail>
+
+    <noData>
+        <band height="15">
+            <staticText>
+                <reportElement x="0" y="0" width="556" height="15" forecolor="#999999" uuid="no-lab"/>
+                <textElement><font fontName="SansSerif" size="8" isItalic="true"/></textElement>
+                <text><![CDATA[No lab results in the last 30 days.]]></text>
+            </staticText>
+        </band>
+    </noData>
+</jasperReport>

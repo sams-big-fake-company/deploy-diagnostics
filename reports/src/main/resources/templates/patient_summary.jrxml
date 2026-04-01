@@ -1,0 +1,321 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Patient Summary Report
+     Created: 2019-04-02 by Marcus Chen
+     Modified: 2023-08-15 by Sarah Kim - added allergies section per JIRA-4521
+     
+     This report generates a one-page patient summary including demographics,
+     recent encounters, active medications, and latest lab results.
+     Used by nursing staff for shift handoff and by case managers for discharge planning.
+     
+     Parameters:
+       - patient_id: The patient_id to generate the summary for
+       - as_of_date: Date to use as "current" (defaults to NOW if not provided)
+-->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="patient_summary" pageWidth="612" pageHeight="792" columnWidth="555"
+              leftMargin="28" rightMargin="28" topMargin="28" bottomMargin="28"
+              uuid="a1b2c3d4-e5f6-7890-abcd-ef1234567890">
+
+    <property name="ireport.zoom" value="1.0"/>
+    <property name="ireport.x" value="0"/>
+    <property name="ireport.y" value="0"/>
+
+    <parameter name="patient_id" class="java.lang.Integer">
+        <defaultValueExpression><![CDATA[1]]></defaultValueExpression>
+    </parameter>
+    <parameter name="as_of_date" class="java.sql.Timestamp">
+        <defaultValueExpression><![CDATA[new java.sql.Timestamp(System.currentTimeMillis())]]></defaultValueExpression>
+    </parameter>
+    <parameter name="SUBREPORT_DIR" class="java.lang.String" isForPrompting="false">
+        <defaultValueExpression><![CDATA[""]]></defaultValueExpression>
+    </parameter>
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            p.mrn,
+            p.first_name || ' ' || p.last_name AS patient_name,
+            TO_CHAR(p.date_of_birth, 'MM/DD/YYYY') AS dob,
+            calculate_age(p.date_of_birth) AS age,
+            CASE p.gender
+                WHEN 'M' THEN 'Male'
+                WHEN 'F' THEN 'Female'
+                WHEN 'O' THEN 'Other'
+                ELSE 'Unknown'
+            END AS gender,
+            p.blood_type,
+            p.phone,
+            p.email,
+            COALESCE(p.address_line1, '') || 
+                CASE WHEN p.address_line2 IS NOT NULL THEN ', ' || p.address_line2 ELSE '' END ||
+                ', ' || COALESCE(p.city, '') || ', ' || COALESCE(p.state, '') || ' ' || COALESCE(p.zip_code, '') AS full_address,
+            p.emergency_contact_name,
+            p.emergency_contact_phone,
+            p.insurance_provider,
+            p.insurance_plan,
+            p.insurance_member_id,
+            COALESCE(p.allergies, 'NKDA') AS allergies,
+            pr.first_name || ' ' || pr.last_name || ', ' || COALESCE(pr.credential, '') AS pcp_name,
+            pr.specialty AS pcp_specialty
+        FROM patients p
+        LEFT JOIN providers pr ON p.primary_care_provider_id = pr.provider_id
+        WHERE p.patient_id = $P{patient_id}
+        ]]>
+    </queryString>
+
+    <field name="mrn" class="java.lang.String"/>
+    <field name="patient_name" class="java.lang.String"/>
+    <field name="dob" class="java.lang.String"/>
+    <field name="age" class="java.lang.Integer"/>
+    <field name="gender" class="java.lang.String"/>
+    <field name="blood_type" class="java.lang.String"/>
+    <field name="phone" class="java.lang.String"/>
+    <field name="email" class="java.lang.String"/>
+    <field name="full_address" class="java.lang.String"/>
+    <field name="emergency_contact_name" class="java.lang.String"/>
+    <field name="emergency_contact_phone" class="java.lang.String"/>
+    <field name="insurance_provider" class="java.lang.String"/>
+    <field name="insurance_plan" class="java.lang.String"/>
+    <field name="insurance_member_id" class="java.lang.String"/>
+    <field name="allergies" class="java.lang.String"/>
+    <field name="pcp_name" class="java.lang.String"/>
+    <field name="pcp_specialty" class="java.lang.String"/>
+
+    <title>
+        <band height="70">
+            <staticText>
+                <reportElement x="0" y="0" width="556" height="30" forecolor="#1A3C6E" uuid="hdr-001"/>
+                <textElement textAlignment="Left" verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="18" isBold="true"/>
+                </textElement>
+                <text><![CDATA[ACME HEALTH SYSTEMS]]></text>
+            </staticText>
+            <staticText>
+                <reportElement x="0" y="30" width="556" height="20" forecolor="#666666" uuid="hdr-002"/>
+                <textElement textAlignment="Left" verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="12"/>
+                </textElement>
+                <text><![CDATA[Patient Summary Report]]></text>
+            </staticText>
+            <textField pattern="MM/dd/yyyy HH:mm">
+                <reportElement x="400" y="30" width="156" height="20" forecolor="#666666" uuid="hdr-003"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="10"/>
+                </textElement>
+                <textFieldExpression><![CDATA["Generated: " + new java.text.SimpleDateFormat("MM/dd/yyyy HH:mm").format(new java.util.Date())]]></textFieldExpression>
+            </textField>
+            <line>
+                <reportElement x="0" y="55" width="556" height="1" forecolor="#1A3C6E" uuid="hdr-line"/>
+            </line>
+        </band>
+    </title>
+
+    <detail>
+        <band height="600" splitType="Stretch">
+            <!-- Demographics Section -->
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="5" width="556" height="18" backcolor="#E8EFF7" uuid="demo-hdr"/>
+                <textElement verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="11" isBold="true"/>
+                </textElement>
+                <text><![CDATA[  PATIENT DEMOGRAPHICS]]></text>
+            </staticText>
+
+            <staticText>
+                <reportElement x="0" y="28" width="80" height="15" uuid="lbl-name"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Patient Name:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="80" y="28" width="200" height="15" uuid="val-name"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{patient_name}]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="300" y="28" width="40" height="15" uuid="lbl-mrn"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[MRN:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="340" y="28" width="120" height="15" uuid="val-mrn"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{mrn}]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="0" y="45" width="80" height="15" uuid="lbl-dob"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Date of Birth:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="80" y="45" width="120" height="15" uuid="val-dob"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{dob} + " (Age: " + $F{age} + ")"]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="300" y="45" width="40" height="15" uuid="lbl-sex"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Sex:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="340" y="45" width="80" height="15" uuid="val-sex"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{gender}]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="440" y="45" width="60" height="15" uuid="lbl-blood"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Blood Type:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="500" y="45" width="56" height="15" uuid="val-blood"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{blood_type}]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="0" y="62" width="80" height="15" uuid="lbl-addr"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Address:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="80" y="62" width="476" height="15" uuid="val-addr"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{full_address}]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="0" y="79" width="80" height="15" uuid="lbl-phone"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Phone:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="80" y="79" width="150" height="15" uuid="val-phone"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{phone}]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="300" y="79" width="80" height="15" uuid="lbl-emerg"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Emergency:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="380" y="79" width="176" height="15" uuid="val-emerg"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{emergency_contact_name} + " " + $F{emergency_contact_phone}]]></textFieldExpression>
+            </textField>
+
+            <!-- Insurance -->
+            <staticText>
+                <reportElement x="0" y="96" width="80" height="15" uuid="lbl-ins"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Insurance:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="80" y="96" width="300" height="15" uuid="val-ins"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{insurance_provider} + " - " + $F{insurance_plan} + " (" + $F{insurance_member_id} + ")"]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="0" y="113" width="80" height="15" uuid="lbl-pcp"/>
+                <textElement><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[PCP:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="80" y="113" width="300" height="15" uuid="val-pcp"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$F{pcp_name} + " (" + $F{pcp_specialty} + ")"]]></textFieldExpression>
+            </textField>
+
+            <!-- Allergies - highlighted if present -->
+            <!-- JIRA-4521: Sarah added this section 2023-08-15 -->
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="135" width="556" height="18" backcolor="#FFF3E0" uuid="allergy-hdr"/>
+                <textElement verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="11" isBold="true"/>
+                </textElement>
+                <text><![CDATA[  ALLERGIES]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="0" y="155" width="556" height="20" uuid="val-allergies"/>
+                <textElement>
+                    <font fontName="SansSerif" size="10" isBold="true"/>
+                </textElement>
+                <textFieldExpression><![CDATA[$F{allergies}.equals("NKDA") ? "No Known Drug Allergies (NKDA)" : $F{allergies}]]></textFieldExpression>
+            </textField>
+
+            <!-- Recent Encounters subreport -->
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="185" width="556" height="18" backcolor="#E8EFF7" uuid="enc-hdr"/>
+                <textElement verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="11" isBold="true"/>
+                </textElement>
+                <text><![CDATA[  RECENT ENCOUNTERS (Last 90 Days)]]></text>
+            </staticText>
+            <subreport>
+                <reportElement x="0" y="205" width="556" height="100" uuid="enc-sub"/>
+                <subreportParameter name="patient_id">
+                    <subreportParameterExpression><![CDATA[$P{patient_id}]]></subreportParameterExpression>
+                </subreportParameter>
+                <connectionExpression><![CDATA[$P{REPORT_CONNECTION}]]></connectionExpression>
+                <subreportExpression><![CDATA[$P{SUBREPORT_DIR} + "patient_summary_encounters.jasper"]]></subreportExpression>
+            </subreport>
+
+            <!-- Active Medications subreport -->
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="315" width="556" height="18" backcolor="#E8EFF7" uuid="med-hdr"/>
+                <textElement verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="11" isBold="true"/>
+                </textElement>
+                <text><![CDATA[  ACTIVE MEDICATIONS]]></text>
+            </staticText>
+            <subreport>
+                <reportElement x="0" y="335" width="556" height="100" uuid="med-sub"/>
+                <subreportParameter name="patient_id">
+                    <subreportParameterExpression><![CDATA[$P{patient_id}]]></subreportParameterExpression>
+                </subreportParameter>
+                <connectionExpression><![CDATA[$P{REPORT_CONNECTION}]]></connectionExpression>
+                <subreportExpression><![CDATA[$P{SUBREPORT_DIR} + "patient_summary_medications.jasper"]]></subreportExpression>
+            </subreport>
+
+            <!-- Latest Lab Results subreport -->
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="445" width="556" height="18" backcolor="#E8EFF7" uuid="lab-hdr"/>
+                <textElement verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="11" isBold="true"/>
+                </textElement>
+                <text><![CDATA[  LATEST LAB RESULTS]]></text>
+            </staticText>
+            <subreport>
+                <reportElement x="0" y="465" width="556" height="120" uuid="lab-sub"/>
+                <subreportParameter name="patient_id">
+                    <subreportParameterExpression><![CDATA[$P{patient_id}]]></subreportParameterExpression>
+                </subreportParameter>
+                <connectionExpression><![CDATA[$P{REPORT_CONNECTION}]]></connectionExpression>
+                <subreportExpression><![CDATA[$P{SUBREPORT_DIR} + "patient_summary_labs.jasper"]]></subreportExpression>
+            </subreport>
+        </band>
+    </detail>
+
+    <pageFooter>
+        <band height="30">
+            <staticText>
+                <reportElement x="0" y="5" width="300" height="15" forecolor="#999999" uuid="ftr-conf"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <text><![CDATA[CONFIDENTIAL - Protected Health Information - Do not distribute]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="450" y="5" width="106" height="15" forecolor="#999999" uuid="ftr-page"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER}]]></textFieldExpression>
+            </textField>
+        </band>
+    </pageFooter>
+</jasperReport>

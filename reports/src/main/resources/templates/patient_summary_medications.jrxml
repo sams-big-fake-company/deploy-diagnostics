@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Subreport: Active medications for patient summary -->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="patient_summary_medications" pageWidth="556" pageHeight="100" columnWidth="556"
+              leftMargin="0" rightMargin="0" topMargin="0" bottomMargin="0"
+              uuid="sub-med-001">
+
+    <parameter name="patient_id" class="java.lang.Integer"/>
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            m.drug_name,
+            m.dosage,
+            m.frequency,
+            m.route,
+            TO_CHAR(m.start_date, 'MM/DD/YYYY') AS start_date,
+            pr.last_name || ', ' || pr.first_name AS prescriber,
+            CASE WHEN m.high_alert THEN 'YES' ELSE '' END AS high_alert_flag,
+            CASE WHEN m.is_prn THEN 'PRN' ELSE '' END AS prn_flag,
+            COALESCE(m.pharmacy_notes, '') AS notes
+        FROM medications m
+        LEFT JOIN providers pr ON m.prescribing_provider_id = pr.provider_id
+        WHERE m.patient_id = $P{patient_id}
+          AND m.is_active = TRUE
+        ORDER BY m.high_alert DESC, m.drug_name
+        ]]>
+    </queryString>
+
+    <field name="drug_name" class="java.lang.String"/>
+    <field name="dosage" class="java.lang.String"/>
+    <field name="frequency" class="java.lang.String"/>
+    <field name="route" class="java.lang.String"/>
+    <field name="start_date" class="java.lang.String"/>
+    <field name="prescriber" class="java.lang.String"/>
+    <field name="high_alert_flag" class="java.lang.String"/>
+    <field name="prn_flag" class="java.lang.String"/>
+    <field name="notes" class="java.lang.String"/>
+
+    <columnHeader>
+        <band height="15">
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="0" width="130" height="15" backcolor="#D6E4F0" uuid="mh-drug"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Medication]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="130" y="0" width="80" height="15" backcolor="#D6E4F0" uuid="mh-dose"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Dosage]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="210" y="0" width="100" height="15" backcolor="#D6E4F0" uuid="mh-freq"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Frequency]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="310" y="0" width="50" height="15" backcolor="#D6E4F0" uuid="mh-route"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Route]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="360" y="0" width="100" height="15" backcolor="#D6E4F0" uuid="mh-presc"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Prescriber]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="460" y="0" width="40" height="15" backcolor="#D6E4F0" uuid="mh-ha"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Hi-Alert]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="500" y="0" width="56" height="15" backcolor="#D6E4F0" uuid="mh-prn"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[PRN]]></text>
+            </staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="14">
+            <textField isBlankWhenNull="true">
+                <reportElement x="0" y="0" width="130" height="14" uuid="md-drug"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{drug_name}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="130" y="0" width="80" height="14" uuid="md-dose"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{dosage}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="210" y="0" width="100" height="14" uuid="md-freq"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{frequency}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="310" y="0" width="50" height="14" uuid="md-route"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{route}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="360" y="0" width="100" height="14" uuid="md-presc"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{prescriber}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="460" y="0" width="40" height="14" forecolor="#CC0000" uuid="md-ha"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{high_alert_flag}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="500" y="0" width="56" height="14" uuid="md-prn"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{prn_flag}]]></textFieldExpression>
+            </textField>
+        </band>
+    </detail>
+
+    <noData>
+        <band height="15">
+            <staticText>
+                <reportElement x="0" y="0" width="556" height="15" forecolor="#999999" uuid="no-med"/>
+                <textElement><font fontName="SansSerif" size="8" isItalic="true"/></textElement>
+                <text><![CDATA[No active medications on file.]]></text>
+            </staticText>
+        </band>
+    </noData>
+</jasperReport>
