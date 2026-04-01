@@ -1,0 +1,481 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Billing Statement Report
+     Created: 2019-06-10 by Marcus Chen
+     Modified: 2022-04-18 by Marcus - added contractual adjustment column (JIRA-3102)
+     Modified: 2024-01-09 by Sarah Kim - fixed insurance adjustment rounding (JIRA-5890)
+     
+     Generates a patient-facing billing statement for a specific encounter.
+     Groups charges by revenue code category with subtotals.
+     Shows insurance adjustments, patient responsibility, and balance due.
+     
+     Parameters:
+       - encounter_id: The encounter to generate the statement for
+     
+     NOTE: The balance calculation logic in this report matches what's in the
+     billing system (Epic). If you change the calc here, make sure it matches.
+     Marcus had a spreadsheet that documented the business rules but I can't
+     find it. - Sarah, 2024-01-09
+-->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="billing_statement" pageWidth="612" pageHeight="792" columnWidth="555"
+              leftMargin="28" rightMargin="28" topMargin="28" bottomMargin="28"
+              uuid="bill-main-001">
+
+    <property name="ireport.zoom" value="1.0"/>
+
+    <parameter name="encounter_id" class="java.lang.Integer"/>
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            bi.billing_id,
+            bi.charge_code,
+            bi.description,
+            bi.revenue_code,
+            -- Revenue code category for grouping
+            CASE
+                WHEN bi.revenue_code LIKE '01%' THEN '01 - Room & Board'
+                WHEN bi.revenue_code LIKE '02%' THEN '02 - Pharmacy & Supplies'
+                WHEN bi.revenue_code LIKE '03%' THEN '03 - Laboratory & Pathology'
+                WHEN bi.revenue_code LIKE '04%' THEN '04 - Therapy Services'
+                WHEN bi.revenue_code LIKE '05%' OR bi.revenue_code LIKE '06%' THEN '05 - Specialty Services'
+                WHEN bi.revenue_code LIKE '07%' THEN '07 - Diagnostic Services'
+                ELSE '09 - Other Services'
+            END AS revenue_category,
+            TO_CHAR(bi.service_date, 'MM/DD/YYYY') AS service_date,
+            bi.quantity,
+            bi.unit_price,
+            bi.total_price,
+            bi.insurance_adjustment,
+            bi.contractual_adjustment,
+            -- Patient responsibility = total - insurance adj - contractual adj
+            -- JIRA-5890: was previously rounding incorrectly for partial payments
+            ROUND(bi.total_price - bi.insurance_adjustment - bi.contractual_adjustment, 2) AS net_amount,
+            COALESCE(bi.patient_responsibility,
+                ROUND(bi.total_price - bi.insurance_adjustment - bi.contractual_adjustment, 2)) AS patient_amount,
+            bi.payment_status,
+            -- Patient demographics (denormalized for header)
+            p.mrn,
+            p.first_name || ' ' || p.last_name AS patient_name,
+            COALESCE(p.address_line1, '') || CASE WHEN p.address_line2 IS NOT NULL THEN CHR(10) || p.address_line2 ELSE '' END AS address_lines,
+            COALESCE(p.city, '') || ', ' || COALESCE(p.state, '') || ' ' || COALESCE(p.zip_code, '') AS city_state_zip,
+            p.insurance_provider,
+            p.insurance_member_id,
+            -- Encounter info
+            e.encounter_type,
+            TO_CHAR(e.admission_date, 'MM/DD/YYYY') AS admit_date,
+            COALESCE(TO_CHAR(e.discharge_date, 'MM/DD/YYYY'), 'In Progress') AS discharge_date,
+            d.name AS department_name,
+            -- Claim info
+            ic.claim_number,
+            ic.status AS claim_status,
+            COALESCE(ic.denial_reason, '') AS denial_reason
+        FROM billing_items bi
+        JOIN encounters e ON bi.encounter_id = e.encounter_id
+        JOIN patients p ON bi.patient_id = p.patient_id
+        JOIN departments d ON e.department_id = d.department_id
+        LEFT JOIN insurance_claims ic ON e.encounter_id = ic.encounter_id
+        WHERE bi.encounter_id = $P{encounter_id}
+        ORDER BY revenue_category, bi.service_date, bi.billing_id
+        ]]>
+    </queryString>
+
+    <field name="billing_id" class="java.lang.Integer"/>
+    <field name="charge_code" class="java.lang.String"/>
+    <field name="description" class="java.lang.String"/>
+    <field name="revenue_code" class="java.lang.String"/>
+    <field name="revenue_category" class="java.lang.String"/>
+    <field name="service_date" class="java.lang.String"/>
+    <field name="quantity" class="java.lang.Integer"/>
+    <field name="unit_price" class="java.math.BigDecimal"/>
+    <field name="total_price" class="java.math.BigDecimal"/>
+    <field name="insurance_adjustment" class="java.math.BigDecimal"/>
+    <field name="contractual_adjustment" class="java.math.BigDecimal"/>
+    <field name="net_amount" class="java.math.BigDecimal"/>
+    <field name="patient_amount" class="java.math.BigDecimal"/>
+    <field name="payment_status" class="java.lang.String"/>
+    <field name="mrn" class="java.lang.String"/>
+    <field name="patient_name" class="java.lang.String"/>
+    <field name="address_lines" class="java.lang.String"/>
+    <field name="city_state_zip" class="java.lang.String"/>
+    <field name="insurance_provider" class="java.lang.String"/>
+    <field name="insurance_member_id" class="java.lang.String"/>
+    <field name="encounter_type" class="java.lang.String"/>
+    <field name="admit_date" class="java.lang.String"/>
+    <field name="discharge_date" class="java.lang.String"/>
+    <field name="department_name" class="java.lang.String"/>
+    <field name="claim_number" class="java.lang.String"/>
+    <field name="claim_status" class="java.lang.String"/>
+    <field name="denial_reason" class="java.lang.String"/>
+
+    <!-- Running totals -->
+    <variable name="total_charges" class="java.math.BigDecimal" calculation="Sum">
+        <variableExpression><![CDATA[$F{total_price}]]></variableExpression>
+    </variable>
+    <variable name="total_ins_adj" class="java.math.BigDecimal" calculation="Sum">
+        <variableExpression><![CDATA[$F{insurance_adjustment}]]></variableExpression>
+    </variable>
+    <variable name="total_contract_adj" class="java.math.BigDecimal" calculation="Sum">
+        <variableExpression><![CDATA[$F{contractual_adjustment}]]></variableExpression>
+    </variable>
+    <variable name="total_patient_resp" class="java.math.BigDecimal" calculation="Sum">
+        <variableExpression><![CDATA[$F{patient_amount}]]></variableExpression>
+    </variable>
+
+    <!-- Group subtotals by revenue category -->
+    <variable name="category_subtotal" class="java.math.BigDecimal" resetType="Group" resetGroup="revenueGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{total_price}]]></variableExpression>
+    </variable>
+    <variable name="category_patient" class="java.math.BigDecimal" resetType="Group" resetGroup="revenueGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{patient_amount}]]></variableExpression>
+    </variable>
+
+    <group name="revenueGroup">
+        <groupExpression><![CDATA[$F{revenue_category}]]></groupExpression>
+        <groupHeader>
+            <band height="18">
+                <textField>
+                    <reportElement mode="Opaque" x="0" y="0" width="556" height="18" backcolor="#E8EFF7" uuid="grp-hdr"/>
+                    <textElement verticalAlignment="Middle">
+                        <font fontName="SansSerif" size="9" isBold="true"/>
+                    </textElement>
+                    <textFieldExpression><![CDATA["  " + $F{revenue_category}]]></textFieldExpression>
+                </textField>
+            </band>
+        </groupHeader>
+        <groupFooter>
+            <band height="18">
+                <staticText>
+                    <reportElement x="0" y="0" width="330" height="18" uuid="grp-sub-lbl"/>
+                    <textElement textAlignment="Right" verticalAlignment="Middle">
+                        <font fontName="SansSerif" size="8" isBold="true"/>
+                    </textElement>
+                    <text><![CDATA[Category Subtotal:  ]]></text>
+                </staticText>
+                <textField pattern="$#,##0.00">
+                    <reportElement x="330" y="0" width="80" height="18" uuid="grp-sub-tot"/>
+                    <textElement textAlignment="Right" verticalAlignment="Middle">
+                        <font fontName="SansSerif" size="8" isBold="true"/>
+                    </textElement>
+                    <textFieldExpression><![CDATA[$V{category_subtotal}]]></textFieldExpression>
+                </textField>
+                <textField pattern="$#,##0.00">
+                    <reportElement x="476" y="0" width="80" height="18" uuid="grp-sub-pat"/>
+                    <textElement textAlignment="Right" verticalAlignment="Middle">
+                        <font fontName="SansSerif" size="8" isBold="true"/>
+                    </textElement>
+                    <textFieldExpression><![CDATA[$V{category_patient}]]></textFieldExpression>
+                </textField>
+                <line>
+                    <reportElement x="0" y="17" width="556" height="1" forecolor="#CCCCCC" uuid="grp-line"/>
+                </line>
+            </band>
+        </groupFooter>
+    </group>
+
+    <title>
+        <band height="160">
+            <!-- Hospital header -->
+            <staticText>
+                <reportElement x="0" y="0" width="300" height="24" forecolor="#1A3C6E" uuid="bill-hdr"/>
+                <textElement><font fontName="SansSerif" size="16" isBold="true"/></textElement>
+                <text><![CDATA[ACME HEALTH SYSTEMS]]></text>
+            </staticText>
+            <staticText>
+                <reportElement x="0" y="24" width="300" height="14" forecolor="#666666" uuid="bill-addr"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <text><![CDATA[1200 Healthcare Drive, Springfield, IL 62701 | (217) 555-0000]]></text>
+            </staticText>
+            <staticText>
+                <reportElement x="350" y="0" width="206" height="20" forecolor="#1A3C6E" uuid="bill-title"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="14" isBold="true"/></textElement>
+                <text><![CDATA[BILLING STATEMENT]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="350" y="20" width="206" height="14" forecolor="#666666" uuid="bill-date"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA["Statement Date: " + new java.text.SimpleDateFormat("MM/dd/yyyy").format(new java.util.Date())]]></textFieldExpression>
+            </textField>
+
+            <line><reportElement x="0" y="42" width="556" height="1" forecolor="#1A3C6E" uuid="bill-sep1"/></line>
+
+            <!-- Patient info block -->
+            <staticText>
+                <reportElement x="0" y="48" width="80" height="14" uuid="lbl-pt"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Patient:]]></text>
+            </staticText>
+            <textField><reportElement x="80" y="48" width="200" height="14" uuid="val-pt"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{patient_name}]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="300" y="48" width="80" height="14" uuid="lbl-acct"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Account #:]]></text>
+            </staticText>
+            <textField><reportElement x="380" y="48" width="176" height="14" uuid="val-acct"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{mrn}]]></textFieldExpression>
+            </textField>
+
+            <textField isBlankWhenNull="true">
+                <reportElement x="80" y="62" width="200" height="14" uuid="val-addr1"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{address_lines}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="80" y="76" width="200" height="14" uuid="val-csz"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{city_state_zip}]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="300" y="62" width="80" height="14" uuid="lbl-ins2"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Insurance:]]></text>
+            </staticText>
+            <textField><reportElement x="380" y="62" width="176" height="14" uuid="val-ins2"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{insurance_provider}]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="300" y="76" width="80" height="14" uuid="lbl-memid"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Member ID:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true"><reportElement x="380" y="76" width="176" height="14" uuid="val-memid"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{insurance_member_id}]]></textFieldExpression>
+            </textField>
+
+            <!-- Encounter info -->
+            <line><reportElement x="0" y="96" width="556" height="1" forecolor="#CCCCCC" uuid="bill-sep2"/></line>
+            <staticText>
+                <reportElement x="0" y="100" width="80" height="14" uuid="lbl-enctype"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Visit Type:]]></text>
+            </staticText>
+            <textField><reportElement x="80" y="100" width="120" height="14" uuid="val-enctype"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{encounter_type}]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="200" y="100" width="60" height="14" uuid="lbl-dept2"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Department:]]></text>
+            </staticText>
+            <textField><reportElement x="260" y="100" width="130" height="14" uuid="val-dept2"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{department_name}]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="0" y="114" width="80" height="14" uuid="lbl-admit2"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Admit Date:]]></text>
+            </staticText>
+            <textField><reportElement x="80" y="114" width="120" height="14" uuid="val-admit2"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{admit_date}]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="200" y="114" width="60" height="14" uuid="lbl-dc2"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Discharge:]]></text>
+            </staticText>
+            <textField><reportElement x="260" y="114" width="130" height="14" uuid="val-dc2"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{discharge_date}]]></textFieldExpression>
+            </textField>
+
+            <!-- Claim status with denial highlighting -->
+            <staticText>
+                <reportElement x="400" y="100" width="60" height="14" uuid="lbl-clm"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Claim #:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true"><reportElement x="460" y="100" width="96" height="14" uuid="val-clm"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{claim_number}]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="400" y="114" width="60" height="14" uuid="lbl-clmst"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Status:]]></text>
+            </staticText>
+            <textField isBlankWhenNull="true">
+                <reportElement x="460" y="114" width="96" height="14" uuid="val-clmst"
+                    forecolor="#CC0000">
+                    <!-- Red if denied -->
+                    <printWhenExpression><![CDATA["DENIED".equals($F{claim_status})]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{claim_status}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="460" y="114" width="96" height="14" uuid="val-clmst-ok">
+                    <printWhenExpression><![CDATA[!"DENIED".equals($F{claim_status})]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{claim_status}]]></textFieldExpression>
+            </textField>
+
+            <!-- Denial reason if applicable -->
+            <textField isBlankWhenNull="true">
+                <reportElement x="0" y="132" width="556" height="14" forecolor="#CC0000" uuid="val-deny">
+                    <printWhenExpression><![CDATA["DENIED".equals($F{claim_status})]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA["DENIAL REASON: " + $F{denial_reason}]]></textFieldExpression>
+            </textField>
+
+            <line><reportElement x="0" y="150" width="556" height="1" forecolor="#1A3C6E" uuid="bill-sep3"/></line>
+        </band>
+    </title>
+
+    <!-- Column headers for charge detail -->
+    <columnHeader>
+        <band height="18">
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="0" width="70" height="18" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="ch-date"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[ Date]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="70" y="0" width="50" height="18" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="ch-code"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Code]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="120" y="0" width="180" height="18" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="ch-desc"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Description]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="300" y="0" width="30" height="18" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="ch-qty"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Qty ]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="330" y="0" width="80" height="18" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="ch-charges"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Charges ]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="410" y="0" width="66" height="18" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="ch-insadj"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Ins Adj ]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="476" y="0" width="80" height="18" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="ch-patresp"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Your Amount ]]></text>
+            </staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="14">
+            <textField><reportElement x="0" y="0" width="70" height="14" uuid="d-date"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{service_date}]]></textFieldExpression>
+            </textField>
+            <textField><reportElement x="70" y="0" width="50" height="14" uuid="d-code"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{charge_code}]]></textFieldExpression>
+            </textField>
+            <textField isStretchWithOverflow="true"><reportElement x="120" y="0" width="180" height="14" uuid="d-desc"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{description}]]></textFieldExpression>
+            </textField>
+            <textField><reportElement x="300" y="0" width="30" height="14" uuid="d-qty"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{quantity}]]></textFieldExpression>
+            </textField>
+            <textField pattern="$#,##0.00"><reportElement x="330" y="0" width="80" height="14" uuid="d-charges"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_price}]]></textFieldExpression>
+            </textField>
+            <textField pattern="($#,##0.00)"><reportElement x="410" y="0" width="66" height="14" uuid="d-insadj"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{insurance_adjustment}.add($F{contractual_adjustment})]]></textFieldExpression>
+            </textField>
+            <textField pattern="$#,##0.00"><reportElement x="476" y="0" width="80" height="14" uuid="d-patamt"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{patient_amount}]]></textFieldExpression>
+            </textField>
+        </band>
+    </detail>
+
+    <summary>
+        <band height="120">
+            <line><reportElement x="0" y="0" width="556" height="2" forecolor="#1A3C6E" uuid="sum-line1"/></line>
+
+            <!-- Grand totals -->
+            <staticText>
+                <reportElement x="200" y="8" width="130" height="16" uuid="lbl-gtot"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[Total Charges:]]></text>
+            </staticText>
+            <textField pattern="$#,##0.00">
+                <reportElement x="330" y="8" width="80" height="16" uuid="val-gtot"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$V{total_charges}]]></textFieldExpression>
+            </textField>
+
+            <staticText>
+                <reportElement x="200" y="26" width="130" height="16" uuid="lbl-gadj"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="9"/></textElement>
+                <text><![CDATA[Insurance Adjustments:]]></text>
+            </staticText>
+            <textField pattern="($#,##0.00)">
+                <reportElement x="330" y="26" width="146" height="16" uuid="val-gadj"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA[$V{total_ins_adj}.add($V{total_contract_adj})]]></textFieldExpression>
+            </textField>
+
+            <line><reportElement x="330" y="46" width="226" height="1" forecolor="#1A3C6E" uuid="sum-line2"/></line>
+
+            <!-- Amount due - large and prominent -->
+            <staticText>
+                <reportElement x="200" y="50" width="130" height="24" uuid="lbl-due"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="12" isBold="true"/>
+                </textElement>
+                <text><![CDATA[AMOUNT DUE:]]></text>
+            </staticText>
+            <textField pattern="$#,##0.00">
+                <reportElement x="330" y="50" width="226" height="24" forecolor="#1A3C6E" uuid="val-due"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="14" isBold="true"/>
+                </textElement>
+                <textFieldExpression><![CDATA[$V{total_patient_resp}]]></textFieldExpression>
+            </textField>
+
+            <!-- Payment instructions -->
+            <staticText>
+                <reportElement x="0" y="85" width="556" height="30" forecolor="#666666" uuid="pay-inst"/>
+                <textElement textAlignment="Center"><font fontName="SansSerif" size="7"/></textElement>
+                <text><![CDATA[Please remit payment within 30 days. For questions about this statement, contact Patient Financial Services at (217) 555-0100.
+Make checks payable to Acme Health Systems. Include your account number on your check.]]></text>
+            </staticText>
+        </band>
+    </summary>
+
+    <pageFooter>
+        <band height="20">
+            <staticText>
+                <reportElement x="0" y="5" width="300" height="12" forecolor="#999999" uuid="bill-ftr"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <text><![CDATA[This is not a bill for services rendered by your physician. You may receive a separate statement.]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="450" y="5" width="106" height="12" forecolor="#999999" uuid="bill-pg"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER}]]></textFieldExpression>
+            </textField>
+        </band>
+    </pageFooter>
+</jasperReport>

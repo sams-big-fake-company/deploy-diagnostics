@@ -1,0 +1,63 @@
+# =============================================================
+# Acme Health Clinical Reports - Cron Schedule
+# Server: rpt-prod-01.acmehealth.internal
+#
+# Install: crontab report-schedule.crontab
+# Or copy to: /etc/cron.d/acmehealth-reports
+#
+# All times are in America/Chicago (Central Time)
+# The report server is configured for CT.
+#
+# Author: Marcus Chen, 2019
+# Modified: Sarah Kim, 2024-01-15 - adjusted census schedule per nursing request
+# =============================================================
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+MAILTO=ops-alerts@acmehealth.com
+
+# Environment
+REPORT_CONFIG_PATH=/etc/acmehealth/reports.properties
+
+# -----------------------------------------------------------
+# Nightly batch (department census, lab results, financial)
+# Runs at 2:00 AM CT
+# Takes ~15-20 minutes depending on data volume
+# -----------------------------------------------------------
+0 2 * * * /opt/acmehealth/reports/scripts/generate-reports.sh
+
+# -----------------------------------------------------------
+# Department census - every 4 hours during business hours
+# Nursing supervisors requested this for shift changes
+# 6am, 10am, 2pm, 6pm, 10pm
+# (The 2am run is covered by the nightly batch)
+# -----------------------------------------------------------
+0 6,10,14,18,22 * * * /opt/acmehealth/reports/scripts/generate-single-report.sh department_census
+
+# -----------------------------------------------------------
+# Lab results - every 2 hours (for the lab director's dashboard)
+# Covers the past 2 hours of results
+# -----------------------------------------------------------
+0 */2 * * * /opt/acmehealth/reports/scripts/generate-single-report.sh lab_results start_date=$(date -d '2 hours ago' +\%Y-\%m-\%d) end_date=$(date +\%Y-\%m-\%d)
+
+# -----------------------------------------------------------
+# Monthly revenue - 5th of each month at 3:00 AM
+# Gives finance 4 days for late adjustments after month-end
+# -----------------------------------------------------------
+0 3 5 * * /opt/acmehealth/reports/scripts/generate-single-report.sh monthly_revenue report_month=$(date -d 'last month' +\%-m) report_year=$(date -d 'last month' +\%Y)
+
+# -----------------------------------------------------------
+# Provider productivity - 3rd of each month at 4:00 AM
+# Department chairs review this in their monthly meetings
+# -----------------------------------------------------------
+0 4 3 * * /opt/acmehealth/reports/scripts/generate-single-report.sh provider_productivity report_month=$(date -d 'last month' +\%-m) report_year=$(date -d 'last month' +\%Y)
+
+# -----------------------------------------------------------
+# Cleanup old report files (older than 90 days)
+# -----------------------------------------------------------
+30 3 * * 0 find /data/reports/output -name "*.pdf" -mtime +90 -delete
+
+# -----------------------------------------------------------
+# Cleanup old log files (older than 30 days)
+# -----------------------------------------------------------
+30 3 * * 0 find /var/log/acmehealth -name "reports-*.log" -mtime +30 -delete

@@ -1,0 +1,29 @@
+# Build output
+reports/target/
+*.class
+*.jar
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (contain credentials)
+.env
+*.env.local
+
+# Report output (generated PDFs)
+reports/output/*.pdf
+
+# Logs
+*.log
+
+# Maven
+reports/.mvn/

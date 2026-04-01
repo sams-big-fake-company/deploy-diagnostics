@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lab Results Report
+     Created: 2019-07-14 by Marcus Chen
+     Modified: 2023-12-01 by Sarah Kim - added critical value highlighting (JIRA-5601)
+     Modified: 2024-02-20 by Sarah Kim - added test category grouping (JIRA-6200)
+     
+     Generates a comprehensive lab results report for a date range.
+     Groups by test category (CHEMISTRY, HEMATOLOGY, etc.) then by test name.
+     Highlights abnormal and critical values.
+     
+     Used by: Lab director (weekly review), nursing staff (shift handoff),
+     physicians (patient rounds). The nursing version uses patient_id filter,
+     the lab director version runs without it for all patients.
+     
+     TODO(marcus): The reference ranges are hardcoded in the lab_results table.
+     Ideally these would come from a reference_ranges table but we never built that.
+-->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="lab_results" pageWidth="612" pageHeight="792" columnWidth="555"
+              leftMargin="28" rightMargin="28" topMargin="28" bottomMargin="28"
+              uuid="lab-main-001">
+
+    <parameter name="patient_id" class="java.lang.Integer" isForPrompting="false">
+        <parameterDescription><![CDATA[If null, runs for all patients (lab director mode)]]></parameterDescription>
+    </parameter>
+    <parameter name="start_date" class="java.sql.Date">
+        <defaultValueExpression><![CDATA[java.sql.Date.valueOf(java.time.LocalDate.now().minusDays(7))]]></defaultValueExpression>
+    </parameter>
+    <parameter name="end_date" class="java.sql.Date">
+        <defaultValueExpression><![CDATA[java.sql.Date.valueOf(java.time.LocalDate.now())]]></defaultValueExpression>
+    </parameter>
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            lr.test_category,
+            lr.test_code,
+            lr.test_name,
+            p.mrn,
+            p.first_name || ' ' || p.last_name AS patient_name,
+            lr.result_value,
+            lr.result_numeric,
+            lr.unit,
+            lr.reference_range_low,
+            lr.reference_range_high,
+            CASE
+                WHEN lr.reference_range_low IS NOT NULL AND lr.reference_range_high IS NOT NULL THEN
+                    CAST(lr.reference_range_low AS VARCHAR) || ' - ' || CAST(lr.reference_range_high AS VARCHAR)
+                ELSE 'N/A'
+            END AS reference_range,
+            lr.abnormal_flag,
+            lr.critical_flag,
+            TO_CHAR(lr.collected_date, 'MM/DD/YYYY HH24:MI') AS collected_date,
+            TO_CHAR(lr.resulted_date, 'MM/DD/YYYY HH24:MI') AS resulted_date,
+            pr.last_name || ', ' || pr.first_name AS ordering_provider,
+            lr.performing_lab,
+            lr.status,
+            -- Time from collection to result (turnaround time in hours)
+            CASE WHEN lr.resulted_date IS NOT NULL THEN
+                ROUND(EXTRACT(EPOCH FROM (lr.resulted_date - lr.collected_date)) / 3600.0, 1)
+            ELSE NULL END AS tat_hours
+        FROM lab_results lr
+        JOIN patients p ON lr.patient_id = p.patient_id
+        LEFT JOIN providers pr ON lr.ordering_provider_id = pr.provider_id
+        WHERE lr.collected_date BETWEEN $P{start_date} AND ($P{end_date}::date + INTERVAL '1 day')
+          AND lr.status IN ('FINAL', 'CORRECTED', 'PRELIMINARY')
+          AND ($P{patient_id} IS NULL OR lr.patient_id = $P{patient_id})
+        ORDER BY lr.test_category, lr.test_name, lr.collected_date DESC
+        ]]>
+    </queryString>
+
+    <field name="test_category" class="java.lang.String"/>
+    <field name="test_code" class="java.lang.String"/>
+    <field name="test_name" class="java.lang.String"/>
+    <field name="mrn" class="java.lang.String"/>
+    <field name="patient_name" class="java.lang.String"/>
+    <field name="result_value" class="java.lang.String"/>
+    <field name="result_numeric" class="java.math.BigDecimal"/>
+    <field name="unit" class="java.lang.String"/>
+    <field name="reference_range" class="java.lang.String"/>
+    <field name="abnormal_flag" class="java.lang.String"/>
+    <field name="critical_flag" class="java.lang.Boolean"/>
+    <field name="collected_date" class="java.lang.String"/>
+    <field name="resulted_date" class="java.lang.String"/>
+    <field name="ordering_provider" class="java.lang.String"/>
+    <field name="performing_lab" class="java.lang.String"/>
+    <field name="status" class="java.lang.String"/>
+    <field name="tat_hours" class="java.math.BigDecimal"/>
+
+    <variable name="category_count" class="java.lang.Integer" resetType="Group" resetGroup="categoryGroup" calculation="Count">
+        <variableExpression><![CDATA[$F{test_code}]]></variableExpression>
+    </variable>
+    <variable name="critical_count" class="java.lang.Integer" calculation="Count">
+        <variableExpression><![CDATA[$F{critical_flag} ? $F{test_code} : null]]></variableExpression>
+    </variable>
+    <variable name="abnormal_count" class="java.lang.Integer" calculation="Count">
+        <variableExpression><![CDATA[$F{abnormal_flag} != null && !$F{abnormal_flag}.equals("N") ? $F{test_code} : null]]></variableExpression>
+    </variable>
+
+    <group name="categoryGroup">
+        <groupExpression><![CDATA[$F{test_category}]]></groupExpression>
+        <groupHeader>
+            <band height="20">
+                <textField>
+                    <reportElement mode="Opaque" x="0" y="0" width="556" height="20" backcolor="#E8EFF7" uuid="cat-hdr"/>
+                    <textElement verticalAlignment="Middle">
+                        <font fontName="SansSerif" size="10" isBold="true"/>
+                    </textElement>
+                    <textFieldExpression><![CDATA["  " + $F{test_category}]]></textFieldExpression>
+                </textField>
+            </band>
+        </groupHeader>
+        <groupFooter>
+            <band height="16">
+                <textField>
+                    <reportElement x="0" y="0" width="556" height="14" forecolor="#666666" uuid="cat-ftr"/>
+                    <textElement textAlignment="Right"><font fontName="SansSerif" size="7" isItalic="true"/></textElement>
+                    <textFieldExpression><![CDATA[$V{category_count} + " results in category  "]]></textFieldExpression>
+                </textField>
+            </band>
+        </groupFooter>
+    </group>
+
+    <title>
+        <band height="65">
+            <staticText>
+                <reportElement x="0" y="0" width="400" height="24" forecolor="#1A3C6E" uuid="t-1"/>
+                <textElement><font fontName="SansSerif" size="16" isBold="true"/></textElement>
+                <text><![CDATA[ACME HEALTH SYSTEMS]]></text>
+            </staticText>
+            <staticText>
+                <reportElement x="0" y="24" width="400" height="16" forecolor="#666666" uuid="t-2"/>
+                <textElement><font fontName="SansSerif" size="11"/></textElement>
+                <text><![CDATA[Laboratory Results Report]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="0" y="42" width="400" height="14" forecolor="#666666" uuid="t-range"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA["Date Range: " + new java.text.SimpleDateFormat("MM/dd/yyyy").format($P{start_date}) + " to " + new java.text.SimpleDateFormat("MM/dd/yyyy").format($P{end_date})]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="400" y="42" width="156" height="14" forecolor="#666666" uuid="t-gen"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA["Generated: " + new java.text.SimpleDateFormat("MM/dd/yyyy HH:mm").format(new java.util.Date())]]></textFieldExpression>
+            </textField>
+            <line><reportElement x="0" y="58" width="556" height="1" forecolor="#1A3C6E" uuid="t-line"/></line>
+        </band>
+    </title>
+
+    <columnHeader>
+        <band height="16">
+            <staticText><reportElement mode="Opaque" x="0" y="0" width="80" height="16" backcolor="#D6E4F0" uuid="h-test"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[ Test]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="80" y="0" width="50" height="16" backcolor="#D6E4F0" uuid="h-mrn"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[MRN]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="130" y="0" width="80" height="16" backcolor="#D6E4F0" uuid="h-pt"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Patient]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="210" y="0" width="60" height="16" backcolor="#D6E4F0" uuid="h-val"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Result]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="270" y="0" width="35" height="16" backcolor="#D6E4F0" uuid="h-unit"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Unit]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="305" y="0" width="60" height="16" backcolor="#D6E4F0" uuid="h-ref"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Ref Range]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="365" y="0" width="25" height="16" backcolor="#D6E4F0" uuid="h-flag"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Flg]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="390" y="0" width="80" height="16" backcolor="#D6E4F0" uuid="h-coll"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Collected]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="470" y="0" width="50" height="16" backcolor="#D6E4F0" uuid="h-stat"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Status]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="520" y="0" width="36" height="16" backcolor="#D6E4F0" uuid="h-tat"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[TAT]]></text></staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="13">
+            <textField isBlankWhenNull="true"><reportElement x="0" y="0" width="80" height="13" uuid="d-test"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{test_name}]]></textFieldExpression></textField>
+            <textField><reportElement x="80" y="0" width="50" height="13" uuid="d-mrn"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{mrn}]]></textFieldExpression></textField>
+            <textField><reportElement x="130" y="0" width="80" height="13" uuid="d-pt"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{patient_name}]]></textFieldExpression></textField>
+
+            <!-- Result value with conditional formatting -->
+            <textField isBlankWhenNull="true">
+                <reportElement x="210" y="0" width="60" height="13" forecolor="#CC0000" uuid="d-val-crit">
+                    <printWhenExpression><![CDATA[$F{critical_flag}]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA["** " + $F{result_value} + " **"]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="210" y="0" width="60" height="13" forecolor="#CC6600" uuid="d-val-abn">
+                    <printWhenExpression><![CDATA[!$F{critical_flag} && $F{abnormal_flag} != null && !$F{abnormal_flag}.equals("N")]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{result_value}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="210" y="0" width="60" height="13" uuid="d-val-norm">
+                    <printWhenExpression><![CDATA[!$F{critical_flag} && ($F{abnormal_flag} == null || $F{abnormal_flag}.equals("N"))]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{result_value}]]></textFieldExpression>
+            </textField>
+
+            <textField isBlankWhenNull="true"><reportElement x="270" y="0" width="35" height="13" uuid="d-unit"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{unit}]]></textFieldExpression></textField>
+            <textField isBlankWhenNull="true"><reportElement x="305" y="0" width="60" height="13" uuid="d-ref"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{reference_range}]]></textFieldExpression></textField>
+            <textField isBlankWhenNull="true"><reportElement x="365" y="0" width="25" height="13" uuid="d-flag"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{abnormal_flag}]]></textFieldExpression></textField>
+            <textField isBlankWhenNull="true"><reportElement x="390" y="0" width="80" height="13" uuid="d-coll"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{collected_date}]]></textFieldExpression></textField>
+            <textField isBlankWhenNull="true"><reportElement x="470" y="0" width="50" height="13" uuid="d-stat"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{status}]]></textFieldExpression></textField>
+            <textField isBlankWhenNull="true"><reportElement x="520" y="0" width="36" height="13" uuid="d-tat"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{tat_hours} + "h"]]></textFieldExpression></textField>
+        </band>
+    </detail>
+
+    <pageFooter>
+        <band height="15">
+            <staticText>
+                <reportElement x="0" y="2" width="350" height="10" forecolor="#999999" uuid="ftr-1"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <text><![CDATA[CONFIDENTIAL - Acme Clinical Laboratory - CLIA# 14D0990477 - CAP# 7654321]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="450" y="2" width="106" height="10" forecolor="#999999" uuid="ftr-pg"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER}]]></textFieldExpression>
+            </textField>
+        </band>
+    </pageFooter>
+</jasperReport>

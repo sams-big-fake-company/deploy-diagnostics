@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Provider Productivity Report
+     Created: 2020-01-15 by Marcus Chen
+     Modified: 2023-03-10 by Sarah Kim - added wRVU calculation (JIRA-3980)
+     Modified: 2024-02-01 by Sarah Kim - fixed hourly rate calculation for part-time (JIRA-6050)
+     
+     Monthly provider productivity metrics. Used by medical staff office
+     and department chairs for performance review and credentialing.
+     
+     This is the most politically sensitive report. Department chairs use
+     it for bonus calculations. The wRVU numbers MUST match what's in
+     the compensation system or we get complaints. Marcus originally
+     built this to use a simplified RVU lookup but Sarah added the real
+     wRVU weights from CMS. The weights are hardcoded in the function
+     because we don't have a proper RVU table. - Sarah, 2024-02-01
+     
+     TODO: Build proper RVU reference table and load CMS weights annually.
+     TODO: Add year-over-year comparison column (requested by Dr. Martinez, JIRA-6180)
+-->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="provider_productivity" pageWidth="792" pageHeight="612" orientation="Landscape"
+              columnWidth="752" leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20"
+              uuid="prod-main-001">
+
+    <parameter name="report_month" class="java.lang.Integer">
+        <defaultValueExpression><![CDATA[java.time.LocalDate.now().getMonthValue()]]></defaultValueExpression>
+    </parameter>
+    <parameter name="report_year" class="java.lang.Integer">
+        <defaultValueExpression><![CDATA[java.time.LocalDate.now().getYear()]]></defaultValueExpression>
+    </parameter>
+    <parameter name="department_id" class="java.lang.Integer" isForPrompting="false">
+        <parameterDescription><![CDATA[If null, shows all departments]]></parameterDescription>
+    </parameter>
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            pp.department_name,
+            pp.provider_name,
+            pp.credential,
+            pp.specialty,
+            pp.total_encounters,
+            pp.inpatient_encounters,
+            pp.outpatient_encounters,
+            pp.emergency_encounters,
+            pp.total_procedures,
+            pp.total_procedure_revenue,
+            pp.total_billing_revenue,
+            pp.avg_los,
+            -- wRVU estimate based on procedure CPT codes
+            -- This is a rough approximation. Real wRVU should come from
+            -- a proper reference table with CMS weights.
+            -- Using a simplified multiplier based on procedure unit_cost
+            -- which correlates roughly with RVU weight. Not ideal but it's
+            -- what Marcus built and finance has accepted it.
+            ROUND(pp.total_procedure_revenue / NULLIF(
+                CASE pp.credential
+                    WHEN 'MD' THEN 65.0  -- approximate $/wRVU for physicians
+                    WHEN 'DO' THEN 65.0
+                    WHEN 'NP' THEN 45.0  -- NPs bill at ~85% of physician rate
+                    WHEN 'PA' THEN 45.0
+                    ELSE 55.0
+                END, 0), 1) AS estimated_wrvus,
+            pp.provider_hourly_rate,
+            -- Revenue per encounter
+            CASE WHEN pp.total_encounters > 0 THEN
+                ROUND(pp.total_billing_revenue / pp.total_encounters, 2)
+            ELSE 0 END AS revenue_per_encounter,
+            -- Revenue per hour (assumes 160 hours/month for FT)
+            -- JIRA-6050: Part-time providers were showing inflated per-hour numbers
+            -- because we assumed 160 hours. Now we use actual hours from encounters.
+            CASE WHEN pp.total_encounters > 0 THEN
+                ROUND(pp.total_billing_revenue / GREATEST(pp.total_encounters * 0.75, 1), 2)
+            ELSE 0 END AS est_revenue_per_hour
+        FROM v_provider_productivity pp
+        WHERE pp.report_month = $P{report_month}
+          AND pp.report_year = $P{report_year}
+          AND ($P{department_id} IS NULL OR pp.department_id = $P{department_id})
+        ORDER BY pp.department_name, pp.total_billing_revenue DESC
+        ]]>
+    </queryString>
+
+    <field name="department_name" class="java.lang.String"/>
+    <field name="provider_name" class="java.lang.String"/>
+    <field name="credential" class="java.lang.String"/>
+    <field name="specialty" class="java.lang.String"/>
+    <field name="total_encounters" class="java.lang.Long"/>
+    <field name="inpatient_encounters" class="java.lang.Long"/>
+    <field name="outpatient_encounters" class="java.lang.Long"/>
+    <field name="emergency_encounters" class="java.lang.Long"/>
+    <field name="total_procedures" class="java.lang.Long"/>
+    <field name="total_procedure_revenue" class="java.math.BigDecimal"/>
+    <field name="total_billing_revenue" class="java.math.BigDecimal"/>
+    <field name="avg_los" class="java.math.BigDecimal"/>
+    <field name="estimated_wrvus" class="java.math.BigDecimal"/>
+    <field name="provider_hourly_rate" class="java.math.BigDecimal"/>
+    <field name="revenue_per_encounter" class="java.math.BigDecimal"/>
+    <field name="est_revenue_per_hour" class="java.math.BigDecimal"/>
+
+    <variable name="dept_encounters" class="java.lang.Long" resetType="Group" resetGroup="deptGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{total_encounters}]]></variableExpression>
+    </variable>
+    <variable name="dept_revenue" class="java.math.BigDecimal" resetType="Group" resetGroup="deptGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{total_billing_revenue}]]></variableExpression>
+    </variable>
+    <variable name="dept_wrvus" class="java.math.BigDecimal" resetType="Group" resetGroup="deptGroup" calculation="Sum">
+        <variableExpression><![CDATA[$F{estimated_wrvus}]]></variableExpression>
+    </variable>
+
+    <group name="deptGroup">
+        <groupExpression><![CDATA[$F{department_name}]]></groupExpression>
+        <groupHeader>
+            <band height="20">
+                <textField>
+                    <reportElement mode="Opaque" x="0" y="0" width="752" height="20" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="dg-hdr"/>
+                    <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA["  " + $F{department_name}]]></textFieldExpression>
+                </textField>
+            </band>
+        </groupHeader>
+        <groupFooter>
+            <band height="18">
+                <line><reportElement x="0" y="0" width="752" height="1" forecolor="#1A3C6E" uuid="dg-ln"/></line>
+                <staticText><reportElement x="0" y="2" width="100" height="14" uuid="dg-lbl"/>
+                    <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                    <text><![CDATA[  Department Total:]]></text></staticText>
+                <textField><reportElement x="260" y="2" width="40" height="14" uuid="dg-enc"/>
+                    <textElement textAlignment="Right"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA[$V{dept_encounters}]]></textFieldExpression></textField>
+                <textField pattern="$#,##0"><reportElement x="480" y="2" width="80" height="14" uuid="dg-rev"/>
+                    <textElement textAlignment="Right"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA[$V{dept_revenue}]]></textFieldExpression></textField>
+                <textField pattern="#,##0.0"><reportElement x="620" y="2" width="50" height="14" uuid="dg-wrvu"/>
+                    <textElement textAlignment="Right"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA[$V{dept_wrvus}]]></textFieldExpression></textField>
+            </band>
+        </groupFooter>
+    </group>
+
+    <title>
+        <band height="60">
+            <staticText><reportElement x="0" y="0" width="400" height="24" forecolor="#1A3C6E" uuid="t-1"/>
+                <textElement><font fontName="SansSerif" size="16" isBold="true"/></textElement>
+                <text><![CDATA[ACME HEALTH SYSTEMS]]></text></staticText>
+            <textField>
+                <reportElement x="0" y="24" width="400" height="18" forecolor="#666666" uuid="t-2"/>
+                <textElement><font fontName="SansSerif" size="12"/></textElement>
+                <textFieldExpression><![CDATA["Provider Productivity - " + new java.text.DateFormatSymbols().getMonths()[$P{report_month}-1] + " " + $P{report_year}]]></textFieldExpression>
+            </textField>
+            <staticText><reportElement x="500" y="0" width="252" height="14" forecolor="#CC0000" uuid="t-conf"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[CONFIDENTIAL - RESTRICTED DISTRIBUTION]]></text></staticText>
+            <textField><reportElement x="500" y="24" width="252" height="14" forecolor="#666666" uuid="t-gen"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA["Generated: " + new java.text.SimpleDateFormat("MM/dd/yyyy HH:mm").format(new java.util.Date())]]></textFieldExpression></textField>
+            <line><reportElement x="0" y="48" width="752" height="1" forecolor="#1A3C6E" uuid="t-ln"/></line>
+        </band>
+    </title>
+
+    <columnHeader>
+        <band height="16">
+            <staticText><reportElement mode="Opaque" x="0" y="0" width="120" height="16" backcolor="#D6E4F0" uuid="h-prov"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[ Provider]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="120" y="0" width="30" height="16" backcolor="#D6E4F0" uuid="h-cred"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Cred]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="150" y="0" width="80" height="16" backcolor="#D6E4F0" uuid="h-spec"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Specialty]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="230" y="0" width="30" height="16" backcolor="#D6E4F0" uuid="h-totenc"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Tot ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="260" y="0" width="30" height="16" backcolor="#D6E4F0" uuid="h-ip"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[IP ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="290" y="0" width="30" height="16" backcolor="#D6E4F0" uuid="h-op"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[OP ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="320" y="0" width="30" height="16" backcolor="#D6E4F0" uuid="h-ed"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[ED ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="350" y="0" width="30" height="16" backcolor="#D6E4F0" uuid="h-proc"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Procs ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="380" y="0" width="40" height="16" backcolor="#D6E4F0" uuid="h-alos"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[ALOS ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="420" y="0" width="60" height="16" backcolor="#D6E4F0" uuid="h-procrev"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Proc Rev ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="480" y="0" width="80" height="16" backcolor="#D6E4F0" uuid="h-totrev"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Total Revenue ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="560" y="0" width="60" height="16" backcolor="#D6E4F0" uuid="h-revenc"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Rev/Enc ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="620" y="0" width="50" height="16" backcolor="#D6E4F0" uuid="h-wrvu"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Est wRVU ]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="670" y="0" width="82" height="16" backcolor="#D6E4F0" uuid="h-note"/>
+                <textElement textAlignment="Right" verticalAlignment="Middle"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <text><![CDATA[Rev/Hr Est ]]></text></staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="13">
+            <textField><reportElement x="0" y="0" width="120" height="13" uuid="d-prov"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[" " + $F{provider_name}]]></textFieldExpression></textField>
+            <textField><reportElement x="120" y="0" width="30" height="13" uuid="d-cred"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{credential}]]></textFieldExpression></textField>
+            <textField isBlankWhenNull="true"><reportElement x="150" y="0" width="80" height="13" uuid="d-spec"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{specialty}]]></textFieldExpression></textField>
+            <textField><reportElement x="230" y="0" width="30" height="13" uuid="d-totenc"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_encounters}]]></textFieldExpression></textField>
+            <textField><reportElement x="260" y="0" width="30" height="13" uuid="d-ip"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{inpatient_encounters}]]></textFieldExpression></textField>
+            <textField><reportElement x="290" y="0" width="30" height="13" uuid="d-op"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{outpatient_encounters}]]></textFieldExpression></textField>
+            <textField><reportElement x="320" y="0" width="30" height="13" uuid="d-ed"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{emergency_encounters}]]></textFieldExpression></textField>
+            <textField><reportElement x="350" y="0" width="30" height="13" uuid="d-proc"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_procedures}]]></textFieldExpression></textField>
+            <textField pattern="#0.0"><reportElement x="380" y="0" width="40" height="13" uuid="d-alos"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{avg_los}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="420" y="0" width="60" height="13" uuid="d-procrev"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_procedure_revenue}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="480" y="0" width="80" height="13" uuid="d-totrev"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{total_billing_revenue}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0"><reportElement x="560" y="0" width="60" height="13" uuid="d-revenc"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{revenue_per_encounter}]]></textFieldExpression></textField>
+            <textField pattern="#,##0.0" isBlankWhenNull="true"><reportElement x="620" y="0" width="50" height="13" uuid="d-wrvu"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{estimated_wrvus}]]></textFieldExpression></textField>
+            <textField pattern="$#,##0" isBlankWhenNull="true"><reportElement x="670" y="0" width="82" height="13" uuid="d-revhr"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{est_revenue_per_hour}]]></textFieldExpression></textField>
+        </band>
+    </detail>
+
+    <pageFooter>
+        <band height="20">
+            <staticText><reportElement x="0" y="2" width="500" height="10" forecolor="#999999" uuid="f-1"/>
+                <textElement><font fontName="SansSerif" size="5" isItalic="true"/></textElement>
+                <text><![CDATA[wRVU estimates based on simplified CMS rate approximation. For credentialing decisions, use official data from Medical Staff Office. RESTRICTED DISTRIBUTION - DO NOT FORWARD.]]></text></staticText>
+            <textField><reportElement x="600" y="2" width="152" height="10" forecolor="#999999" uuid="f-pg"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER}]]></textFieldExpression></textField>
+        </band>
+    </pageFooter>
+</jasperReport>

@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Medication Administration Record (MAR)
+     Created: 2020-03-22 by Marcus Chen
+     Modified: 2024-01-15 by Sarah Kim - added high-alert drug highlighting (JIRA-5950)
+     
+     Used by pharmacy and nursing for medication reconciliation.
+     Shows all medications for a patient with administration schedule.
+     High-alert medications are highlighted in red per Joint Commission
+     requirements.
+     
+     NOTE: This is one of the most error-prone reports because the
+     frequency field in the medications table is free-text. "BID",
+     "twice daily", "q12h", and "every 12 hours" all mean the same
+     thing but display differently. Marcus tried to normalize this
+     with a CASE statement but gave up after finding 47 different
+     variations. The clinical team has accepted this.
+-->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="medication_administration" pageWidth="612" pageHeight="792" columnWidth="555"
+              leftMargin="28" rightMargin="28" topMargin="28" bottomMargin="28"
+              uuid="mar-main-001">
+
+    <parameter name="patient_id" class="java.lang.Integer"/>
+    <parameter name="include_discontinued" class="java.lang.Boolean">
+        <defaultValueExpression><![CDATA[Boolean.FALSE]]></defaultValueExpression>
+    </parameter>
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            m.drug_name,
+            COALESCE(m.generic_name, m.drug_name) AS generic_name,
+            m.drug_class,
+            m.dosage,
+            m.frequency,
+            m.route,
+            TO_CHAR(m.start_date, 'MM/DD/YYYY') AS start_date,
+            COALESCE(TO_CHAR(m.end_date, 'MM/DD/YYYY'), '') AS end_date,
+            m.is_active,
+            m.is_prn,
+            m.high_alert,
+            COALESCE(m.pharmacy_notes, '') AS pharmacy_notes,
+            pr.last_name || ', ' || pr.first_name || ' ' || COALESCE(pr.credential, '') AS prescriber,
+            -- Patient info for header
+            p.mrn,
+            p.first_name || ' ' || p.last_name AS patient_name,
+            TO_CHAR(p.date_of_birth, 'MM/DD/YYYY') AS dob,
+            calculate_age(p.date_of_birth) AS age,
+            COALESCE(p.allergies, 'NKDA') AS allergies,
+            p.blood_type
+        FROM medications m
+        JOIN patients p ON m.patient_id = p.patient_id
+        LEFT JOIN providers pr ON m.prescribing_provider_id = pr.provider_id
+        WHERE m.patient_id = $P{patient_id}
+          AND (m.is_active = TRUE OR $P{include_discontinued} = TRUE)
+        ORDER BY
+            m.high_alert DESC,        -- High-alert drugs first
+            m.is_active DESC,         -- Active before discontinued
+            m.drug_class,             -- Group by class
+            m.drug_name
+        ]]>
+    </queryString>
+
+    <field name="drug_name" class="java.lang.String"/>
+    <field name="generic_name" class="java.lang.String"/>
+    <field name="drug_class" class="java.lang.String"/>
+    <field name="dosage" class="java.lang.String"/>
+    <field name="frequency" class="java.lang.String"/>
+    <field name="route" class="java.lang.String"/>
+    <field name="start_date" class="java.lang.String"/>
+    <field name="end_date" class="java.lang.String"/>
+    <field name="is_active" class="java.lang.Boolean"/>
+    <field name="is_prn" class="java.lang.Boolean"/>
+    <field name="high_alert" class="java.lang.Boolean"/>
+    <field name="pharmacy_notes" class="java.lang.String"/>
+    <field name="prescriber" class="java.lang.String"/>
+    <field name="mrn" class="java.lang.String"/>
+    <field name="patient_name" class="java.lang.String"/>
+    <field name="dob" class="java.lang.String"/>
+    <field name="age" class="java.lang.Integer"/>
+    <field name="allergies" class="java.lang.String"/>
+    <field name="blood_type" class="java.lang.String"/>
+
+    <variable name="active_count" class="java.lang.Integer" calculation="Count">
+        <variableExpression><![CDATA[$F{is_active} ? $F{drug_name} : null]]></variableExpression>
+    </variable>
+    <variable name="high_alert_count" class="java.lang.Integer" calculation="Count">
+        <variableExpression><![CDATA[$F{high_alert} ? $F{drug_name} : null]]></variableExpression>
+    </variable>
+
+    <group name="drugClassGroup">
+        <groupExpression><![CDATA[$F{drug_class}]]></groupExpression>
+        <groupHeader>
+            <band height="18">
+                <textField>
+                    <reportElement mode="Opaque" x="0" y="0" width="556" height="18" backcolor="#E8EFF7" uuid="gc-hdr"/>
+                    <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                    <textFieldExpression><![CDATA["  " + ($F{drug_class} != null ? $F{drug_class} : "Unclassified")]]></textFieldExpression>
+                </textField>
+            </band>
+        </groupHeader>
+    </group>
+
+    <title>
+        <band height="110">
+            <staticText><reportElement x="0" y="0" width="300" height="24" forecolor="#1A3C6E" uuid="t-1"/>
+                <textElement><font fontName="SansSerif" size="16" isBold="true"/></textElement>
+                <text><![CDATA[ACME HEALTH SYSTEMS]]></text></staticText>
+            <staticText><reportElement x="0" y="24" width="300" height="16" forecolor="#666666" uuid="t-2"/>
+                <textElement><font fontName="SansSerif" size="11"/></textElement>
+                <text><![CDATA[Medication Administration Record]]></text></staticText>
+            <textField>
+                <reportElement x="400" y="24" width="156" height="14" forecolor="#666666" uuid="t-gen"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA["Generated: " + new java.text.SimpleDateFormat("MM/dd/yyyy HH:mm").format(new java.util.Date())]]></textFieldExpression>
+            </textField>
+            <line><reportElement x="0" y="44" width="556" height="1" forecolor="#1A3C6E" uuid="t-ln"/></line>
+
+            <!-- Patient header -->
+            <staticText><reportElement x="0" y="50" width="60" height="14" uuid="lbl-pt"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[Patient:]]></text></staticText>
+            <textField><reportElement x="60" y="50" width="200" height="14" uuid="val-pt"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{patient_name}]]></textFieldExpression></textField>
+            <staticText><reportElement x="280" y="50" width="40" height="14" uuid="lbl-mrn"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[MRN:]]></text></staticText>
+            <textField><reportElement x="320" y="50" width="100" height="14" uuid="val-mrn"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{mrn}]]></textFieldExpression></textField>
+            <staticText><reportElement x="440" y="50" width="40" height="14" uuid="lbl-dob"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[DOB:]]></text></staticText>
+            <textField><reportElement x="480" y="50" width="76" height="14" uuid="val-dob"/>
+                <textElement><font fontName="SansSerif" size="8"/></textElement>
+                <textFieldExpression><![CDATA[$F{dob} + " (" + $F{age} + "y)"]]></textFieldExpression></textField>
+
+            <!-- Allergy warning box - JIRA-5950: highlighted per Joint Commission -->
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="70" width="556" height="18" backcolor="#FFF3E0" uuid="allergy-hdr"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="9" isBold="true"/></textElement>
+                <text><![CDATA[  ALLERGIES:]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="80" y="70" width="476" height="18" uuid="allergy-val"/>
+                <textElement verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="9" isBold="true"/>
+                </textElement>
+                <textFieldExpression><![CDATA[$F{allergies}]]></textFieldExpression>
+            </textField>
+
+            <line><reportElement x="0" y="95" width="556" height="1" forecolor="#1A3C6E" uuid="t-ln2"/></line>
+        </band>
+    </title>
+
+    <columnHeader>
+        <band height="16">
+            <staticText><reportElement mode="Opaque" x="0" y="0" width="120" height="16" backcolor="#D6E4F0" uuid="h-drug"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[ Medication (Generic)]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="120" y="0" width="70" height="16" backcolor="#D6E4F0" uuid="h-dose"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Dosage]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="190" y="0" width="80" height="16" backcolor="#D6E4F0" uuid="h-freq"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Frequency]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="270" y="0" width="50" height="16" backcolor="#D6E4F0" uuid="h-route"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Route]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="320" y="0" width="60" height="16" backcolor="#D6E4F0" uuid="h-start"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Start]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="380" y="0" width="90" height="16" backcolor="#D6E4F0" uuid="h-presc"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Prescriber]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="470" y="0" width="40" height="16" backcolor="#D6E4F0" uuid="h-stat"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Status]]></text></staticText>
+            <staticText><reportElement mode="Opaque" x="510" y="0" width="46" height="16" backcolor="#D6E4F0" uuid="h-alert"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Alert]]></text></staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="26">
+            <!-- Drug name: red background if high-alert -->
+            <textField isStretchWithOverflow="true">
+                <reportElement x="0" y="0" width="120" height="13" uuid="d-drug"
+                    forecolor="#CC0000">
+                    <printWhenExpression><![CDATA[$F{high_alert}]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[" " + $F{drug_name}]]></textFieldExpression>
+            </textField>
+            <textField isStretchWithOverflow="true">
+                <reportElement x="0" y="0" width="120" height="13" uuid="d-drug-norm">
+                    <printWhenExpression><![CDATA[!$F{high_alert}]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[" " + $F{drug_name}]]></textFieldExpression>
+            </textField>
+            <!-- Generic name on second line -->
+            <textField isBlankWhenNull="true">
+                <reportElement x="0" y="13" width="120" height="12" forecolor="#666666" uuid="d-generic"/>
+                <textElement><font fontName="SansSerif" size="6" isItalic="true"/></textElement>
+                <textFieldExpression><![CDATA[" (" + $F{generic_name} + ")"]]></textFieldExpression>
+            </textField>
+
+            <textField><reportElement x="120" y="0" width="70" height="13" uuid="d-dose"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{dosage}]]></textFieldExpression></textField>
+            <textField><reportElement x="190" y="0" width="80" height="13" uuid="d-freq"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{frequency} + ($F{is_prn} ? " (PRN)" : "")]]></textFieldExpression></textField>
+            <textField><reportElement x="270" y="0" width="50" height="13" uuid="d-route"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{route}]]></textFieldExpression></textField>
+            <textField><reportElement x="320" y="0" width="60" height="13" uuid="d-start"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{start_date}]]></textFieldExpression></textField>
+            <textField isBlankWhenNull="true"><reportElement x="380" y="0" width="90" height="13" uuid="d-presc"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{prescriber}]]></textFieldExpression></textField>
+            <textField>
+                <reportElement x="470" y="0" width="40" height="13" uuid="d-stat"
+                    forecolor="#009900">
+                    <printWhenExpression><![CDATA[$F{is_active}]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA["ACTIVE"]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="470" y="0" width="40" height="13" uuid="d-stat-dc"
+                    forecolor="#999999">
+                    <printWhenExpression><![CDATA[!$F{is_active}]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA["D/C " + $F{end_date}]]></textFieldExpression>
+            </textField>
+            <!-- High-alert indicator -->
+            <staticText>
+                <reportElement mode="Opaque" x="510" y="0" width="46" height="13" backcolor="#FFCCCC" uuid="d-ha"
+                    forecolor="#CC0000">
+                    <printWhenExpression><![CDATA[$F{high_alert}]]></printWhenExpression>
+                </reportElement>
+                <textElement textAlignment="Center" verticalAlignment="Middle">
+                    <font fontName="SansSerif" size="7" isBold="true"/>
+                </textElement>
+                <text><![CDATA[HIGH]]></text>
+            </staticText>
+            <!-- Pharmacy notes if present -->
+            <textField isBlankWhenNull="true" isStretchWithOverflow="true">
+                <reportElement x="120" y="13" width="436" height="12" forecolor="#666666" uuid="d-notes">
+                    <printWhenExpression><![CDATA[$F{pharmacy_notes} != null && !$F{pharmacy_notes}.isEmpty()]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="6" isItalic="true"/></textElement>
+                <textFieldExpression><![CDATA["Note: " + $F{pharmacy_notes}]]></textFieldExpression>
+            </textField>
+        </band>
+    </detail>
+
+    <summary>
+        <band height="40">
+            <line><reportElement x="0" y="0" width="556" height="1" forecolor="#1A3C6E" uuid="s-ln"/></line>
+            <textField>
+                <reportElement x="0" y="4" width="556" height="14" uuid="s-cnt"/>
+                <textElement><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA["Active Medications: " + $V{active_count} + "  |  High-Alert: " + $V{high_alert_count}]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="0" y="22" width="556" height="14" forecolor="#CC0000" uuid="s-warn"/>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[HIGH-ALERT medications require independent double-check before administration per hospital policy.]]></text>
+            </staticText>
+        </band>
+    </summary>
+
+    <pageFooter>
+        <band height="15">
+            <staticText><reportElement x="0" y="2" width="350" height="10" forecolor="#999999" uuid="f-1"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <text><![CDATA[CONFIDENTIAL - Protected Health Information - Verify patient identity before administration]]></text></staticText>
+            <textField><reportElement x="450" y="2" width="106" height="10" forecolor="#999999" uuid="f-pg"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER}]]></textFieldExpression></textField>
+        </band>
+    </pageFooter>
+</jasperReport>

@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Department Census Report
+     Created: 2019-05-20 by Marcus Chen
+     Modified: 2024-03-01 by Sarah Kim - include OBSERVATION patients (JIRA-6102)
+     
+     Real-time census of all current inpatients, grouped by department.
+     Used by nursing supervisors and bed management.
+     Runs on demand and also auto-generated every 4 hours.
+-->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd"
+              name="department_census" pageWidth="792" pageHeight="612" orientation="Landscape"
+              columnWidth="752" leftMargin="20" rightMargin="20" topMargin="20" bottomMargin="20"
+              uuid="census-001">
+
+    <queryString>
+        <![CDATA[
+        SELECT
+            c.department_name,
+            c.department_code,
+            c.floor_number,
+            c.mrn,
+            c.patient_name,
+            c.age,
+            c.gender,
+            c.room_number,
+            c.bed_number,
+            COALESCE(c.room_number, '') || COALESCE('-' || c.bed_number, '') AS room_bed,
+            TO_CHAR(c.admission_date, 'MM/DD HH24:MI') AS admit_datetime,
+            c.los_days,
+            c.acuity_level,
+            c.attending_provider,
+            COALESCE(c.primary_diagnosis, 'Pending') AS primary_diagnosis,
+            COALESCE(c.allergies, 'NKDA') AS allergies,
+            c.insurance_provider
+        FROM v_active_census c
+        ORDER BY c.department_name, c.room_number, c.bed_number
+        ]]>
+    </queryString>
+
+    <field name="department_name" class="java.lang.String"/>
+    <field name="department_code" class="java.lang.String"/>
+    <field name="floor_number" class="java.lang.Integer"/>
+    <field name="mrn" class="java.lang.String"/>
+    <field name="patient_name" class="java.lang.String"/>
+    <field name="age" class="java.lang.Integer"/>
+    <field name="gender" class="java.lang.String"/>
+    <field name="room_bed" class="java.lang.String"/>
+    <field name="admit_datetime" class="java.lang.String"/>
+    <field name="los_days" class="java.lang.Integer"/>
+    <field name="acuity_level" class="java.lang.Integer"/>
+    <field name="attending_provider" class="java.lang.String"/>
+    <field name="primary_diagnosis" class="java.lang.String"/>
+    <field name="allergies" class="java.lang.String"/>
+    <field name="insurance_provider" class="java.lang.String"/>
+
+    <variable name="dept_count" class="java.lang.Integer" resetType="Group" resetGroup="departmentGroup" calculation="Count">
+        <variableExpression><![CDATA[$F{mrn}]]></variableExpression>
+    </variable>
+    <variable name="total_count" class="java.lang.Integer" calculation="Count">
+        <variableExpression><![CDATA[$F{mrn}]]></variableExpression>
+    </variable>
+
+    <group name="departmentGroup">
+        <groupExpression><![CDATA[$F{department_name}]]></groupExpression>
+        <groupHeader>
+            <band height="22">
+                <textField>
+                    <reportElement mode="Opaque" x="0" y="0" width="752" height="22" backcolor="#1A3C6E" forecolor="#FFFFFF" uuid="dept-hdr"/>
+                    <textElement verticalAlignment="Middle">
+                        <font fontName="SansSerif" size="10" isBold="true"/>
+                    </textElement>
+                    <textFieldExpression><![CDATA["  " + $F{department_name} + " (" + $F{department_code} + ") - Floor " + $F{floor_number}]]></textFieldExpression>
+                </textField>
+            </band>
+        </groupHeader>
+        <groupFooter>
+            <band height="20">
+                <textField>
+                    <reportElement x="0" y="2" width="752" height="16" forecolor="#1A3C6E" uuid="dept-cnt"/>
+                    <textElement textAlignment="Right">
+                        <font fontName="SansSerif" size="8" isBold="true"/>
+                    </textElement>
+                    <textFieldExpression><![CDATA["Census: " + $V{dept_count} + " patients  "]]></textFieldExpression>
+                </textField>
+            </band>
+        </groupFooter>
+    </group>
+
+    <title>
+        <band height="55">
+            <staticText>
+                <reportElement x="0" y="0" width="400" height="25" forecolor="#1A3C6E" uuid="title-1"/>
+                <textElement><font fontName="SansSerif" size="16" isBold="true"/></textElement>
+                <text><![CDATA[ACME HEALTH SYSTEMS - PATIENT CENSUS]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="0" y="25" width="400" height="15" forecolor="#666666" uuid="title-dt"/>
+                <textElement><font fontName="SansSerif" size="9"/></textElement>
+                <textFieldExpression><![CDATA["As of: " + new java.text.SimpleDateFormat("MM/dd/yyyy HH:mm").format(new java.util.Date())]]></textFieldExpression>
+            </textField>
+            <staticText>
+                <reportElement x="500" y="0" width="252" height="15" forecolor="#CC0000" uuid="title-warn"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="8" isBold="true"/></textElement>
+                <text><![CDATA[CONFIDENTIAL - INTERNAL USE ONLY]]></text>
+            </staticText>
+            <line><reportElement x="0" y="45" width="752" height="1" forecolor="#1A3C6E" uuid="title-line"/></line>
+        </band>
+    </title>
+
+    <columnHeader>
+        <band height="16">
+            <staticText>
+                <reportElement mode="Opaque" x="0" y="0" width="50" height="16" backcolor="#D6E4F0" uuid="ch-rm"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[ Room]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="50" y="0" width="70" height="16" backcolor="#D6E4F0" uuid="ch-mrn"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[MRN]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="120" y="0" width="100" height="16" backcolor="#D6E4F0" uuid="ch-name"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Patient]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="220" y="0" width="30" height="16" backcolor="#D6E4F0" uuid="ch-age"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Age]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="250" y="0" width="70" height="16" backcolor="#D6E4F0" uuid="ch-admit"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Admitted]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="320" y="0" width="30" height="16" backcolor="#D6E4F0" uuid="ch-los"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[LOS]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="350" y="0" width="25" height="16" backcolor="#D6E4F0" uuid="ch-acu"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Acu]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="375" y="0" width="110" height="16" backcolor="#D6E4F0" uuid="ch-prov"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Attending]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="485" y="0" width="170" height="16" backcolor="#D6E4F0" uuid="ch-dx"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Primary Diagnosis]]></text>
+            </staticText>
+            <staticText>
+                <reportElement mode="Opaque" x="655" y="0" width="97" height="16" backcolor="#D6E4F0" uuid="ch-allergy"/>
+                <textElement verticalAlignment="Middle"><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <text><![CDATA[Allergies]]></text>
+            </staticText>
+        </band>
+    </columnHeader>
+
+    <detail>
+        <band height="14">
+            <textField><reportElement x="0" y="0" width="50" height="14" uuid="d-rm"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{room_bed}]]></textFieldExpression></textField>
+            <textField><reportElement x="50" y="0" width="70" height="14" uuid="d-mrn"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{mrn}]]></textFieldExpression></textField>
+            <textField><reportElement x="120" y="0" width="100" height="14" uuid="d-name"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{patient_name}]]></textFieldExpression></textField>
+            <textField><reportElement x="220" y="0" width="30" height="14" uuid="d-age"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{age} + $F{gender}]]></textFieldExpression></textField>
+            <textField><reportElement x="250" y="0" width="70" height="14" uuid="d-admit"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{admit_datetime}]]></textFieldExpression></textField>
+            <textField><reportElement x="320" y="0" width="30" height="14" uuid="d-los"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{los_days} + "d"]]></textFieldExpression></textField>
+            <!-- Acuity: color-coded. 5=red (critical), 4=orange, 3=yellow, 1-2=green -->
+            <textField>
+                <reportElement x="350" y="0" width="25" height="14" uuid="d-acu"
+                    forecolor="#CC0000">
+                    <printWhenExpression><![CDATA[$F{acuity_level} >= 5]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{acuity_level}]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="350" y="0" width="25" height="14" uuid="d-acu2"
+                    forecolor="#CC6600">
+                    <printWhenExpression><![CDATA[$F{acuity_level} == 4]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{acuity_level}]]></textFieldExpression>
+            </textField>
+            <textField>
+                <reportElement x="350" y="0" width="25" height="14" uuid="d-acu3">
+                    <printWhenExpression><![CDATA[$F{acuity_level} != null && $F{acuity_level} < 4]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{acuity_level}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true"><reportElement x="375" y="0" width="110" height="14" uuid="d-prov"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{attending_provider}]]></textFieldExpression></textField>
+            <textField isBlankWhenNull="true" isStretchWithOverflow="true"><reportElement x="485" y="0" width="170" height="14" uuid="d-dx"/>
+                <textElement><font fontName="SansSerif" size="7"/></textElement>
+                <textFieldExpression><![CDATA[$F{primary_diagnosis}]]></textFieldExpression></textField>
+            <!-- Allergies: red if not NKDA -->
+            <textField isBlankWhenNull="true">
+                <reportElement x="655" y="0" width="97" height="14" uuid="d-allergy"
+                    forecolor="#CC0000">
+                    <printWhenExpression><![CDATA[!$F{allergies}.equals("NKDA")]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="6" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA[$F{allergies}]]></textFieldExpression>
+            </textField>
+            <textField isBlankWhenNull="true">
+                <reportElement x="655" y="0" width="97" height="14" uuid="d-allergy-nkda">
+                    <printWhenExpression><![CDATA[$F{allergies}.equals("NKDA")]]></printWhenExpression>
+                </reportElement>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA[$F{allergies}]]></textFieldExpression>
+            </textField>
+        </band>
+    </detail>
+
+    <summary>
+        <band height="30">
+            <line><reportElement x="0" y="2" width="752" height="2" forecolor="#1A3C6E" uuid="sum-line"/></line>
+            <textField>
+                <reportElement x="0" y="6" width="752" height="20" forecolor="#1A3C6E" uuid="sum-total"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="11" isBold="true"/></textElement>
+                <textFieldExpression><![CDATA["Total Hospital Census: " + $V{total_count} + " patients  "]]></textFieldExpression>
+            </textField>
+        </band>
+    </summary>
+
+    <pageFooter>
+        <band height="15">
+            <staticText>
+                <reportElement x="0" y="2" width="400" height="10" forecolor="#999999" uuid="ftr-1"/>
+                <textElement><font fontName="SansSerif" size="6"/></textElement>
+                <text><![CDATA[CONFIDENTIAL - Contains Protected Health Information (PHI) - Authorized personnel only]]></text>
+            </staticText>
+            <textField>
+                <reportElement x="600" y="2" width="152" height="10" forecolor="#999999" uuid="ftr-pg"/>
+                <textElement textAlignment="Right"><font fontName="SansSerif" size="6"/></textElement>
+                <textFieldExpression><![CDATA["Page " + $V{PAGE_NUMBER}]]></textFieldExpression>
+            </textField>
+        </band>
+    </pageFooter>
+</jasperReport>
